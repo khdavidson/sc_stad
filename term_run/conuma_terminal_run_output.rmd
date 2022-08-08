@@ -1,0 +1,506 @@
+
+```{r setup, include=FALSE, echo=F, warning=F, message=F}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Read packages ----------------
+library(tidyverse)
+library(readxl)
+library(knitr)
+#library(devtools)
+#devtools::install_github("haozhu233/kableExtra")    <-- install kableEstr
+library(kableExtra)
+
+# Source background working R script ----------------
+# note this is poor form for reproducibility but otherwise Rmarkdown suffers major bloat
+source("conuma_cn_termrun.R", local = knitr::knit_global())
+
+# Define run year for automation below ----------------
+RR_year <- 2021
+RR_ages <- data.frame(RESOLVED_AGE=c(2:6))
+```
+
+---
+title: "**Conuma terminal run (RY `r RR_year`)**"
+output: html_document
+date: 'Last update: `r Sys.Date()`'
+---
+
+<br>
+
+<br> 
+
+### **Introduction** ### 
+*This can be amended - taken from original Excel file *
+
+The objectives are to: 
+
+1. Estimate **terminal returns** to the area **by age**. The age breakdown is essential for Chinook forecasting and modelling
+2. Estimate the **hatchery contribution** to the terminal runs
+3. Estimate the potential **egg deposition**. For Chinook, we are defining escapement targets by eggs due to the variable age-at-return and variable contribution of females to spawner totals.
+4. Estimate terminal **harvest rates**
+
+<br>
+
+Data sources include:
+
+* Catch data:
+    + Sport age data: from 'BIOCNxxx.xlsx' files. Ages pooled over sub-areas and weighted by stat week sample size. 
+    + Sport termal mark data: from '2013 - X:\WCVI\THERMAL_MARK_PROJECT\Data\Biodata\Sport\Area_25_2009to2013Chinook_Bio_Recreational_Crest_oto_age.xlsx' files.
+* Escapement data:
+    + Query escapement and broodstock estimates from New Escapement Index.xls or from Escapement Coordinator's PDF summaries.
+    + Query escapement age data from NuSEDs; cross check with WCVI files for additional data not entered into NuSEDs; sample N is usually higher than for otolith-linked biodata; ages are uncorrected for sex stratified sampling; for RunRecon years, these data were used to calculate age, rather than pulling from PADs directly
+    + If otolith data are available and linked to biodata, summarize to determine % marked by age; summarize further to determine % marked by age and sex.
+    + Correct escapement sample age data for sex-stratified sampling: 
+        + Determine sex at age proportions from biodata
+        + Use first set sex ratio data from hatchery staff (Conuma) to calculate correction factors
+        + Note: do not correct broodstock age ratio as the hatchery uses 3:3 males:females when spawning (more similar to the sex stratified sample)
+
+**For detailed metadata summaries that contribute to the final summaries, see Appendix A.**
+
+<br>
+
+<br>
+
+### **`r RR_year` Summary Tables** ### 
+
+##### <span style="text-decoration:underline"> 1. Nootka Sound Terminal Return (incl non-local WCVI stocks) </span> #####
+
+*updated after all data in*
+
+##### <span style="text-decoration:underline"> 2. Nootka Sound Terminal Return (Local Area 25 stocks only) </span> #####
+(escapement for index stocks only)
+
+*updated after all data in*
+
+##### <span style="text-decoration:underline"> 3. Conuma River Terminal Return (hatchery & natural Conuma) </span> #####
+
+*updated after all data in*
+
+##### <span style="text-decoration:underline"> 4. Conuma River Terminal Return (hatchery Conuma) </span> #####
+
+*updated after all data in*
+
+<br>
+
+<br>
+
+### **`r RR_year` Recreational fisheries summary** ### 
+
+Rec fisheries: `r infill.rec.db %>% group_by(RUN_RECON_AREA2) %>% summarize(RUN_RECON_AREA2 = unique(RUN_RECON_AREA2)) %>% pull(RUN_RECON_AREA2)`
+
+Data used:
+
+```{r echo=F, warning=F, message=F}
+infill.rec.db %>% 
+  group_by(RUN_RECON_AREA2, MONTH) %>%
+  summarize(`Catch data from`=unique(catch_data_source), `Age data from`=unique(age_data_source), `Stock comp data from`=unique(comp_data_source)) %>%
+  rename(`Rec fishery`=RUN_RECON_AREA2,
+         Month=MONTH) %>%
+  kbl(align="c") %>%
+  kable_styling(bootstrap_options = c("hover", "condensed")) %>%
+  collapse_rows(columns=1, valign="middle", target=1)
+```
+
+Recreational fishery catch summary:
+
+```{r echo=F, message=F, warning=F}
+table_REC_breakdown %>% 
+  mutate(total_kept_by_agecomp = round(total_kept_by_agecomp, 0)) %>%
+  arrange(RESOLVED_AGE) %>%
+  pivot_wider(names_from = RESOLVED_AGE, values_from = total_kept_by_agecomp) %>%
+  filter(!is.na(RUN_RECON_AREA2)) %>%
+  mutate_at(c(4:8), ~replace(., is.na(.), 0)) %>%
+  arrange(RUN_RECON_AREA2, `TERM_CON 2`) %>%
+  rename(`Rec fishery`=RUN_RECON_AREA2,
+         Origin=`TERM_CON 2`,
+         `Total kept` = total_kept) %>%
+  kbl(align="c") %>%
+  kable_paper("hover", full_width=F, position = "center") %>%
+  add_header_above(c(" "=3, "Age"=5)) %>%
+  collapse_rows(columns=c(1,2), valign="middle", target=1)
+```
+
+<br>
+
+<br>
+
+### **`r RR_year` Commercial and 5 Nations fisheries summary** ### 
+
+Commercial fisheries: `r table_COMM_breakdown %>% filter(!is.na(type)) %>% group_by(type) %>% summarize(type=unique(type)) %>%  pull(type)`
+
+Commercial data used:
+
+```{r echo=F, message=F, warning=F}
+comm.db %>% 
+  filter(!is.na(type)) %>%
+  group_by(type) %>%
+  summarize(`Catch data from`=unique(catch_data_source), `Age data from`=unique(age_data_source), `Stock comp data from`=unique(comp_data_source)) %>%
+  rename(`Commercial fishery`=type) %>%
+  kbl(align="c") %>%
+  kable_styling(bootstrap_options = c("hover", "condensed")) 
+```  
+
+Commercial fishery catch summary:
+
+```{r echo=F, message=F, warning=F}
+table_COMM_breakdown %>%
+  mutate(total_kept_by_agecomp = round(total_kept_by_agecomp, 0)) %>%
+  arrange(RESOLVED_AGE) %>%
+  pivot_wider(names_from = RESOLVED_AGE, values_from = total_kept_by_agecomp) %>%
+  filter(!is.na(stock_hatchery_origin)) %>%
+  select(type, total_kept, stock_hatchery_origin, `2`:`6`) %>%
+  rename(Origin=stock_hatchery_origin,
+         Fishery=type,
+         `Total kept` = total_kept) %>%
+  arrange(Fishery, Origin) %>%
+  kbl(align="c") %>%
+  kable_paper("hover", full_width=F, position = "center") %>%
+  add_header_above(c(" "=3, "Age"=5)) %>%
+  collapse_rows(columns=c(1,2), valign="middle", target=1)
+```
+
+<br>
+
+5 Nations ISBM fisheries: `r table_n5_breakdown %>% filter(!is.na(RUN_RECON_AREA2)) %>% group_by(RUN_RECON_AREA2) %>% summarize(RUN_RECON_AREA2=unique(RUN_RECON_AREA2)) %>% pull(RUN_RECON_AREA2)`
+
+5 Nations ISBM data used:
+
+```{r echo=F, message=F, warning=F}
+infill.n5.db %>%
+  filter(!is.na(type)) %>%
+  group_by(RUN_RECON_AREA2) %>%
+  summarize(`Catch data from`=unique(catch_data_source), `Age data from`=unique(age_data_source), `Stock comp data from`=unique(comp_data_source)) %>%
+  rename(`5 Nations fishery`=RUN_RECON_AREA2) %>%
+  kbl(align="c") %>%
+  kable_styling(bootstrap_options = c("hover", "condensed"))   
+```  
+
+5 Nations fishery catch summary:  *Note Outer Nootka doesn't match Excel file right now due to discrepancy in documented stock comp %*
+
+```{r echo=F, message=F, warning=F}
+table_n5_breakdown %>%
+  mutate(total_kept_by_agecomp = round(total_kept_by_agecomp,0)) %>%
+  arrange(RESOLVED_AGE) %>%
+  pivot_wider(names_from = RESOLVED_AGE, values_from = total_kept_by_agecomp) %>%
+  filter(!is.na(`TERM_CON 2`)) %>%
+  select(RUN_RECON_AREA2, total_kept, `TERM_CON 2`, `2`:`6`) %>%
+  rename(Origin=`TERM_CON 2`,
+         `5 Nations fishery`=RUN_RECON_AREA2,
+         `Total kept` = total_kept) %>%
+  arrange(`5 Nations fishery`, Origin) %>%
+  kbl(align="c") %>%
+  kable_paper("hover", full_width=F, position = "center") %>%
+  add_header_above(c(" "=3, "Age"=5)) %>%
+  collapse_rows(columns=c(1,2), valign="middle", target=1)
+```
+<br>
+
+<br>
+
+### **`r RR_year` FSC fisheries summary** ### 
+
+<br>
+
+<br>
+
+### **`r RR_year` Conuma Hatchery and river escapement summary** ### 
+
+Coming soon! 
+
+<br>
+
+<br>
+
+### **`r RR_year` Escapement and catch to other indicator systems summary** ### 
+
+Coming soon! 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<br>
+
+<br>
+
+<br>
+
+<br>
+
+<br>
+
+<br>
+
+<br>
+
+<br>
+
+--------------------
+--------------------
+
+### **Appendix A: Metadata summaries** ### 
+
+Below are summary tables contributing to each fishery/region roll up, similar to the tabs produced in the TERMAL_RUN.xlsx files (e.g., "21_metadata").
+
+<br>
+
+#### **Recreational fishery metadata** ####
+
+##### <span style="text-decoration:underline"> Catch data </span> ##### 
+
+* Source: X:\WCVI\CHINOOK\WCVI_TERMINAL_RUN\Annual_data_summaries_for_RunRecons\2021\2021_SPORT_CATCH_DATA-SC Sport Catch Creel Sub-area Disposition.xlsx
+* Note:  2021 Sport stock compositions can't be updated until fall 2022 (2020 comps are used)
+
+```{r echo=F}
+conuma.rec.catch %>%
+  select(RUN_RECON_AREA2, MONTH, YEAR, total_kept) %>%
+  kbl(align="c") %>%
+  kable_paper("hover", full_width=F, position = "center") %>%
+  collapse_rows(columns=1, valign="middle", target=1)
+```
+
+<br>
+
+##### <span style="text-decoration:underline"> Age data </span> ##### 
+
+* Source: 2020-21_CHINOOK_BIODATA_from_CREST-WCVI_CN_RunRecon_Query_28Feb2022.xlsx, sheet="JB - TERMCON PVT"
+
+```{r echo=F}
+conuma.rec.ages %>%
+  select(RUN_RECON_AREA2, MONTH, age_total, RESOLVED_AGE, age_n, age_propn) %>%
+  mutate(age_propn = round(age_propn*100, 1)) %>%
+  rename(proportion=age_propn) %>%
+  kbl(align="c") %>%
+  kable_paper("hover", full_width=F, position = "center") %>%
+  collapse_rows(columns=c(1,2,3), valign="middle", target=1)
+```
+
+<br>
+
+##### <span style="text-decoration:underline"> Stock comp data </span> ##### 
+
+* Source: 2020-21_CHINOOK_BIODATA_from_CREST-WCVI_CN_RunRecon_Query_28Feb2022.xlsx, sheet="WCVI_Chinook_Run_Rec"
+
+```{r echo=F}
+conuma.rec.comp %>%
+  select(RUN_RECON_AREA2, MONTH, comp_total, `TERM_CON 2`, comp_n, comp_propn) %>%
+  mutate(comp_propn = round(comp_propn*100, 1)) %>%
+  rename(proportion=comp_propn) %>%
+  kbl(align="c") %>%
+  kable_paper("hover", full_width=F, position = "center") %>%
+  collapse_rows(columns=c(1:3), valign="middle", target=1)
+```
+
+<br>
+
+<br>
+
+#### **Commercial fishery metadata** ####
+
+##### <span style="text-decoration:underline"> Catch data </span> ##### 
+
+* Source: 
+    + X:\WCVI\CHINOOK\WCVI_TERMINAL_RUN\Annual_data_summaries_for_RunRecons\2021\2021_SPORT_CATCH_DATA-SC Sport Catch Creel Sub-area Disposition.xlsx
+    + X:\WCVI\CHINOOK\WCVI_TERMINAL_RUN\TERMCON\CON2021\Five Nations 2021 Catch by PFMA by Month_nearshore.xlsx
+
+* Note:  2021 Sport stock compositions can't be updated until fall 2022 (2020 comps are used)
+
+```{r echo=F}
+aD.catch %>%
+  select(YEAR, LICENCE_AREA, catch_data_source, statweek, FISHING_DATE, kept) %>%
+  kbl(align="c") %>%
+  kable_paper("hover", full_width=F, position = "center") %>%
+  collapse_rows(columns=c(1:4), valign="middle", target=1)
+```
+
+<br>
+
+##### <span style="text-decoration:underline"> Age data </span> ##### 
+
+* Source: 2020-21_CHINOOK_BIODATA_from_CREST-WCVI_CN_RunRecon_Query_28Feb2022.xlsx, sheet="JB - TERMCON PVT"
+
+```{r echo=F}
+aD.age %>%
+  select(c(YEAR, SAMPLE_TYPE, age_data_source, statweek, COLLECTION_DATE, RESOLVED_AGE, age_n, age_propn)) %>%
+  mutate(age_propn = round(age_propn*100, 1)) %>%
+  kbl(align="c") %>%
+  kable_paper("hover", full_width=F, position = "center") %>%
+  collapse_rows(columns=c(1:4), valign="middle", target=1)
+```
+
+<br>
+
+##### <span style="text-decoration:underline"> Stock comp data </span> ##### 
+
+* Source: 2020-21_CHINOOK_BIODATA_from_CREST-WCVI_CN_RunRecon_Query_28Feb2022.xlsx, sheet="WCVI_Chinook_Run_Rec"
+
+* Note: Stock composition proportions are given as daily totals by age (e.g., 5 year old Natural Conuma on Aug 12 (n=1) represented 20% of the total number of age-5s sampled on Aug 12). These ages are not used for final ages though.  
+
+```{r echo=F}
+aD.comp %>%
+  select(c(YEAR, SAMPLE_TYPE, comp_data_source, statweek, COLLECTION_DATE, DAYOFYEAR, stock_hatchery_origin, RESOLVED_AGE, comp_n, comp_propn)) %>%
+  mutate(comp_propn = round(comp_propn*100, 1)) %>%
+  kbl(align="c") %>%
+  kable_paper("hover", full_width=F, position = "center") %>%
+  collapse_rows(columns=c(1:5), valign="middle", target=1)
+```
+
+<br>
+
+<br>
+
+##### **5 Nations ISBM Muchalat (Matchlee Bay) and Outer Nootka** #####
+
+##### <span style="text-decoration:underline"> Muchalat (Matchlee) and Outer Nootka catch </span> #####
+
+* Source: X:\WCVI\CHINOOK\WCVI_TERMINAL_RUN\TERMCON\CON2021\Five Nations 2021 Catch by PFMA by Month_nearshore.xlsx
+
+```{r echo=F}
+n5.catch %>%
+  select(c(year, area, type, RUN_RECON_AREA2, catch_data_source, month, kept_catch)) %>%
+  kbl(align="c") %>%
+  kable_paper("hover", full_width=F, position = "center") %>%
+  collapse_rows(columns=c(1:5), valign="middle", target=1)
+```
+
+##### <span style="text-decoration:underline"> Muchalat (Matchlee) and Nootka age </span> #####
+
+* No age data directly sampled in 2021. See main text for data substitutions made.
+
+##### <span style="text-decoration:underline"> Muchalat (Matchlee) and Nootka stock composition </span> #####
+
+* Source: X:\WCVI\CHINOOK\WCVI_TERMINAL_RUN\TERMCON\CON2021\PID20200133_Taaq_A25(20)_sc276_2021-03-23.xlsx
+
+* No stock composition data directly from 5N Outer Nootka ISBM. See main text for data substitutions made. 
+* Note: For 5N Muchalat, stock composition data is calculated as a proportion of the total number of samples by age (e.g., 6 year old Conuma fish (n=1) represented 50% of the total number of age-6s encountered). These ages are not used for final ages though.  
+
+```{r echo=F}
+n5.comp %>%
+  select(c(comp_sample_year, type, comp_data_source, RUN_RECON_AREA2, `TERM_CON 2`, comp_n, comp_total, comp_propn)) %>%
+  mutate(comp_propn = round(comp_propn*100, 1)) %>%
+  kbl(align="c") %>%
+  kable_paper("hover", full_width=F, position = "center") %>%
+  collapse_rows(columns=c(1:5), valign="middle", target=1)
+```
+
+<br>
+
+<br>
+
+##### **SEP Broodstock age data** #####
+
+##### <span style="text-decoration:underline"> Conuma Hatchery </span> #####
+
+* Source: X:\SC_BioData_Management\6-Scale\Age_Results\2021\All_PADS_2021_CN_Ages_to_22Feb2022.xlsx
+
+```{r echo=F}
+sep.ages %>%
+  select(Project, age_data_source, Esc_location, age_total, `GR Age2`, age_n, age_propn) %>%
+  rename(facility=Project,
+         system=Esc_location,
+         Age=`GR Age2`) %>%
+  kbl(align="c") %>%
+  kable_paper("hover", full_width=F, position = "center") %>%
+  collapse_rows(columns=c(1:4), valign="middle", target=1)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r echo=F, eval=F}
+# Backup table printing in case kableExtra becomes unstable 
+knitr::kable(table_REC_breakdown %>% 
+        mutate(kept_by_agecomp = round(kept_by_agecomp,0)) %>%
+        pivot_wider(names_from = RESOLVED_AGE, values_from = kept_by_agecomp) %>%
+        rename(`Rec fishery`=rec_fishery,
+               Origin=`TERM_CON 2`,
+               `Total kept` = total_kept,
+               `Fishery data source type` = type),
+        format="html", align=rep("c", 8))
+```
+

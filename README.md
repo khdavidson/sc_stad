@@ -1,1 +1,1 @@
-# sc_stad
+# South Coast Stock Assessment repo

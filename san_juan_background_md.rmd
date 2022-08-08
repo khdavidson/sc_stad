@@ -1,0 +1,861 @@
+---
+title: "San Juan Background"
+output: html_document
+date: 'Last update: `r Sys.Date()`'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen=9999)
+
+# Load packages -----------------------
+library(tidyverse)
+library(httr)
+library(askpass)
+library(readxl)
+library(openxlsx)    # for createWorkbook() etc
+library(kableExtra)
+library(janitor)     # for row_to_names()
+#remotes::install_git("https://github.com/Pacific-salmon-assess/tagFisheryMapping")
+
+# Define functions -----------------------
+# Get NuSEDS age data
+getNuSEDS <- function(query_doc, password = NULL) {
+  nuseds_url <- "http://pac-salmon.dfo-mpo.gc.ca/Api.NuSEDS.v2/api/DynamicQuery/QueryResult"
+  
+  if(file.exists(query_doc)) {
+    query_file <- file(query_doc, "r")
+    query_doc <- readLines(query_file)
+    close(query_file)
+  }
+  
+  user_name <- Sys.getenv("username")
+  if(is.null(password)) {
+    password <- askpass(paste0("Please enter your password for ",
+                               user_name,
+                               ":"))
+  }
+  
+  data_response <-
+    POST(nuseds_url,
+         authenticate(user_name, password, "ntlm"),
+         encode = "json",
+         content_type_json(),
+         body = query_doc)
+  nuseds_data <- content(data_response)
+  
+  nuseds_col_names <- unlist(nuseds_data$Names)
+  nuseds_data <-
+    lapply(nuseds_data$Rows,
+           function(.) {
+             as_tibble(.$Cells, .name_repair = ~ nuseds_col_names)
+           }) %>%
+    bind_rows()
+  col_types <- unlist(nuseds_data$Types)
+  int_col <- nuseds_col_names[grepl("int", col_types, ignore.case = TRUE)]
+  dbl_col <- nuseds_col_names[grepl("single", col_types, ignore.case = TRUE)]
+  nuseds_data <-
+    nuseds_data %>%
+    mutate(across(all_of(int_col), as.integer)) %>%
+    mutate(across(all_of(dbl_col), as.double))
+  
+  return(nuseds_data)
+}
+
+# Get MRP Releases
+getExtractorData <- function(query_doc, password = NULL) {
+  extractor_url <- "http://pac-salmon.dfo-mpo.gc.ca/Api.DataExtractor.v2/api/DynamicQuery/QueryResult"
+  
+  if(file.exists(query_doc)) {
+    query_file <- file(query_doc, "r")
+    query_doc <- readLines(query_file)
+    close(query_file)
+  }
+  
+  user_name <- Sys.getenv("username")
+  if(is.null(password)) {
+    password <- askpass(paste0("Please enter your password for ",
+                               user_name,
+                               ":"))
+    
+  }
+  
+  data_response <-
+    POST(extractor_url,
+         authenticate(user_name, password, "ntlm"),
+         encode = "json",
+         content_type_json(),
+         body = query_doc)
+  cwt_data <- content(data_response)
+  
+  
+  cwt_col_names <- unlist(cwt_data$Names)
+  extractor_data <-
+    lapply(cwt_data$Rows,
+           function(.) {
+             as_tibble(.$Cells, .name_repair = ~ cwt_col_names)
+           }) %>%
+    bind_rows()
+  
+  
+  col_types <- unlist(cwt_data$Types)
+  
+  int_col <- cwt_col_names[grepl("int", col_types, ignore.case = TRUE)]
+  dbl_col <- cwt_col_names[grepl("single", col_types, ignore.case = TRUE)]
+  
+  extractor_data <-
+    extractor_data %>%
+    mutate(across(all_of(int_col), as.integer)) %>%
+    mutate(across(all_of(dbl_col), as.double))
+  
+  return(extractor_data)
+}
+
+# Set wd -----------------------
+setwd("~/ANALYSIS/data")
+
+
+# Pull data -----------------------
+# If you get a 'Error: std::bad_alloc' message, close R and re-open 
+sj.esc.raw <- getNuSEDS("~/ANALYSIS/data/query_docs_misc/nuseds_esc_query_SJ.json", password="babysharkd0d0!")
+sj.age.raw <- getNuSEDS("~/ANALYSIS/data/query_docs_misc/nuseds_padsCU_query_SJ.json", password="babysharkd0d0!") 
+rec.catch.biodata <- read_excel("Biological_Data_With_Results (April12,2022) SPORT version jun22 v2.xlsx", sheet="BiologicalDATA", skip=4, guess_max = 20000)
+sj.releases.mrp <- getExtractorData("~/ANALYSIS/data/query_docs_misc/mrp_releases_SJ.json", password = "babysharkd0d0!") %>%
+    mutate_at(c(73:87), as.numeric) 
+sj.releases.sep <- read_excel("San Juan Release Report_SEP.xlsx",sheet="Sheet1")
+sj.rel.rcvy <- getExtractorData("~/ANALYSIS/data/query_docs_misc/mrp_release_recovery_SJ.json", password = "babysharkd0d0!") %>% 
+  mutate_at(c(33:45, 126:127), as.numeric)
+sj.pni <- read_excel("SanJuan_PNI_JW.xlsx", sheet="Sheet1")
+sj.pbt <- read_excel("SanJuan_pbt_mgl_jul2022.xlsx", sheet="Sheet1")
+otoTM.ref <- read.csv("OTOMGR_ReferenceSpecimensMerged_A20_CK_2010-20_Jul2022.csv")
+otoTM.rcvyA20 <- read_excel("OTOMGR_RecoverySpecimens-Ages_A20_CK_TS_Jul2022.xlsx", sheet="RcvySpecAge", guess_max=50000)
+otoTM.rcvyAA <- read.csv("OTOMGR_RecoverySpecimensAgesMerged_AllAreas_CK_2000-2021_Jul2022.csv")
+```
+
+<br>
+
+<br>
+
+<br> 
+
+### **Escapement, age and origin**
+
+```{r include=F, message=F, warning=F, echo=F}
+# ===================== ESCAPEMENT =====================
+sj.plot <- sj.esc.raw %>% 
+  select(`Waterbody Name`, Species, `Analysis Year`, `Max Estimate`, `Total Broodstock Removals`) %>% 
+  mutate(`Max Estimate` = ifelse(`Max Estimate`=="", NA, `Max Estimate`),
+         `Total Broodstock Removals` = ifelse(`Total Broodstock Removals`=="", NA, ifelse(`Total Broodstock Removals`==0, NA, `Total Broodstock Removals`))) %>% 
+  mutate_at(c("Total Broodstock Removals", "Max Estimate"), as.numeric) %>%
+  #filter(!is.na(`Max Estimate`)) %>% 
+  pivot_longer(cols=c("Max Estimate", "Total Broodstock Removals"), names_to = "CK_est", values_to = "n") %>% 
+  #mutate(n = ifelse(n=="", NA, n)) %>%
+  print()
+
+
+
+# ===================== AGE DATA =====================
+sj.age <- sj.age.raw %>% 
+  filter(`Species Qualified`=="CK", `Life History Stage`=="Adult", `Age Unit Of Measure`%in%c("EU", "MY"), Age!="", `Part Age Code`!="RG") %>% 
+  mutate(Age2 = case_when(`Age Unit Of Measure`=="EU"~`GR Age`,
+                          `Age Unit Of Measure`=="MY"~Age),
+         resolved_age = case_when(`Age Unit Of Measure`=="MY"~Age,
+                                  `Age Unit Of Measure`=="EU"~substr(`GR Age`, 1, nchar(`GR Age`)-1))) %>%
+  mutate_at(c("Age2", "resolved_age"), as.numeric) %>%
+  filter(resolved_age != 1) %>% 
+  print()
+
+# Age over time -----------------------
+sj.age %>% 
+  group_by(`Fiscal Year`, resolved_age) %>% 
+  summarize(n=n()) %>% 
+  group_by(`Fiscal Year`) %>% 
+  mutate(propn=n/sum(n))
+```
+
+```{r message=F, warning=F, echo=F, include=F}
+# All species and tribs ----------------------- 
+ggplot(sj.plot, aes(x=as.numeric(`Analysis Year`), y=as.numeric(n), fill=CK_est, colour=CK_est)) +
+  geom_line(size=0.7, alpha=0.7) +
+  geom_point(size=2, stroke=1.2, alpha=0.7) +
+  #scale_y_continuous(breaks=seq(0,7000,by=1000)) +
+  scale_x_continuous(breaks=seq(min(sj.plot$`Analysis Year`), max(sj.plot$`Analysis Year`), by=7)) +
+  labs(x="Return Year", y="Number of fish", group="Number of fish", fill="Number of fish", colour="Number of fish") +
+  theme_bw() +
+  theme(axis.text = element_text(colour="black"),
+        axis.title = element_text(face="bold"),
+        panel.grid = element_blank(),
+        legend.position = c(0.8,0.2),
+        legend.background = element_rect(colour="black")) +
+  facet_wrap(`Waterbody Name`~Species, scales="free")
+```
+
+San Juan Chinook escapement has varied over time. From its peak at 7500 in 1970 it declined to less than 2000 fish, but has since returned to escapements that oscillate around 2000-4000 fish. 
+
+The adult age structure is primarily 3, 4 and 5 year olds. Jacks and 6 year olds contribute minimally to the population, especially in recent years. 
+
+```{r message=F, warning=F, echo=F}
+# SJ Chinook only ----------------------- 
+ggplot(sj.plot %>% filter(`Waterbody Name`=="SAN JUAN RIVER", Species=="Chinook"), 
+       aes(x=as.numeric(`Analysis Year`), y=as.numeric(n), fill=CK_est, colour=CK_est)) +
+  geom_line(size=1, alpha=0.7) +
+  geom_point(size=3, stroke=1.2, alpha=0.7) +
+  scale_y_continuous(breaks=seq(0,8000,by=1000)) +
+  scale_x_continuous(breaks=seq(min(sj.plot$`Analysis Year`), max(sj.plot$`Analysis Year`), by=7)) +
+  labs(x="Return Year", y="Number of Chinook", caption="Fig 1. Maximum Chinook escapement estimate and broodstock removals (both include jacks) for San Juan \nChinook (excludes tributaries). Data from NuSEDS.") +
+  theme_bw() +
+  theme(axis.text = element_text(colour="black"),
+        axis.title = element_text(face="bold"),
+        panel.grid = element_blank(),
+        legend.position = c(0.8,0.9),
+        legend.background = element_rect(colour="black"),
+        legend.title = element_blank(),
+        plot.caption = element_text(hjust=0, face="italic"))
+```
+
+<br>
+
+*Table 1. Age structure of San Juan Chinook (excludes tributaries). Data from NuSEDS.*
+```{r echo=F, warning=F, message=F}
+# Overall age structure -----------------------
+sj.age %>% 
+  group_by(`Fiscal Year`, resolved_age) %>% 
+  summarize(n=n()) %>% 
+  group_by(`Fiscal Year`) %>% 
+  mutate(propn=n/sum(n)) %>%
+  group_by(resolved_age) %>% 
+  summarize(avg_propn = mean(propn), sd_propn=sd(propn)) %>% 
+  mutate(avg_propn=round(avg_propn,3)*100, sd_propn=round(sd_propn,3)*100) %>%
+  unite(col="Average proportion (± SD)", c(avg_propn, sd_propn), sep=" ± ") %>%
+  rename(Age=resolved_age) %>%
+  kbl(align="c") %>%
+  kable_paper("hover", full_width=T, position = "center") 
+```
+
+<br>
+
+```{r echo=F, warning=F, message=F}
+# FIGURE: AGE ~ TIME ----------------------- 
+ggplot(sj.age %>% 
+         group_by(`Fiscal Year`, resolved_age) %>% 
+         summarize(n=n()) %>% 
+         group_by(`Fiscal Year`) %>% 
+         mutate(propn=n/sum(n)),
+       aes(x=`Fiscal Year`, y=propn, group=as.factor(resolved_age), fill=as.factor(resolved_age), colour=as.factor(resolved_age))) +
+  geom_bar(stat="identity", position="stack", width=0.6, alpha=0.8) +
+  labs(x="", y="Proportion", fill="Age:", colour="Age:", caption="Fig 2. Annual age structure of San Juan Chinook (excludes tributaries). Data from NuSEDS.") +
+  theme_bw() +
+  theme(axis.text = element_text(colour="black", size=11),
+        axis.text.x = element_text(angle=45, hjust=1),
+        axis.title = element_text(face="bold", size=13),
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.title = element_text(face="bold"),
+        plot.caption = element_text(face="italic", hjust=0))
+```
+
+<br>
+
+Hatchery-origin San Juan chinook have contributed minimally to otolith samples from escapements in the last few years, but have been a large proportion of samples prior to 2014. This is because San Juan BYs 2014-2017 were not thermally marked (or were poorly/partially marked).  
+
+<br>
+
+```{r echo=F, warning=F, message=F, include=F}
+sj.otoTM.rcvy <- otoTM.rcvyA20 %>% 
+  filter(grepl("SAN JUAN", `RCVY LOCATIONS`)) %>% 
+  group_by(`SAMPLE YR`, SOURCE, FACILITY) %>% 
+  summarize(n=n()) %>% 
+  mutate(FACILITY = ifelse(grepl("SAN JUAN", FACILITY), "SAN JUAN RIVER HATCHERY", FACILITY),
+         FACILITY2 = ifelse(FACILITY=="SAN JUAN RIVER HATCHERY", "SAN JUAN RIVER HATCHERY", ifelse(is.na(FACILITY), NA, "Other hatchery"))) %>% 
+  group_by(`SAMPLE YR`, SOURCE, FACILITY2) %>% 
+  summarize(n=sum(n)) %>% 
+  group_by(`SAMPLE YR`, SOURCE) %>%
+  mutate(total=sum(n), `Propn (%)`=round(n/sum(n)*100,0),
+         `Hatchery origin?` = ifelse(is.na(FACILITY2), "N/unk", "Y")) %>% 
+  select(SOURCE, `SAMPLE YR`, total, `Hatchery origin?`, FACILITY2, n, `Propn (%)`) %>%
+  arrange(SOURCE,`SAMPLE YR`) %>%
+  print()
+```
+
+```{r echo=F, warning=F, message=F}
+sj.otoTM.rcvy %>%
+  kbl(align="c") %>%
+  kable_paper("hover", full_width=T, position = "center") %>%
+  collapse_rows(columns=c(1,2,3), valign="middle") 
+```
+
+<br>
+
+```{r echo=F, warning=F, message=F}
+ggplot() +
+  geom_bar(data=sj.otoTM.rcvy, aes(x=`SAMPLE YR`, y=`Propn (%)`, group=`Hatchery origin?`, fill=`Hatchery origin?`, colour=`Hatchery origin?`), stat="identity", position="stack", alpha=0.7, size=1) +
+  #geom_point(data=sj.otoTM.refNAs, aes(x=as.numeric(BROOD.YEAR), y=link), size=2) +
+  labs(x="Sample year", y="Proportion in oto TM recoveries (%)", caption="Fig. Proportion of Chinook recovered in the San Juan River that are hatchery (blue) and natural/unknown (pink) origin \nbased on otolith thermal mark recoveries. Overlapping shading represents occasional small number of hatchery strays \nencountered. This does not take into account marking/release effort and strategies; it is important to consider thermal \nmarking strategies/effort given below.") +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        legend.direction = "horizontal",
+        plot.caption = element_text(hjust=0, face="italic"),
+        panel.grid = element_blank()) +
+  facet_wrap(.~SOURCE, nrow = 2, scales="free")
+```
+<br>
+
+```{r include=F}
+# ******* here next day:
+# REDO OTOMGR RECVY SPEC QUERY: incl all PFMAs, recent ~10 years to see where SJ ck show up 
+```
+
+<br>
+
+<br> 
+
+------------------------
+
+### **Enhancement activity**
+
+The 4 Mile Creek Enhancement Society operates the 4 Mile Hatchery to enahnce San Juan chinook. The current board of directors is composed of the society members, hatchery managers, Pacheedaht and MOSAIC representatives. The hatchery is modest in its capacity to produce chinook (as well as some coho and chum). Releases are typically less than 1 million and are usually smolts (sometimes fed fry). Current release goals are approximately 460,000 smolts. 
+
+Due to water shortage issues at the hatchery in warmer months, most juveniles are transferred to the Fairy Lakepen for the remainder of their holding time. Juveniles are then released from the Fairy Lake outlet (~200m from the San Juan River). A subset are CWT'd and held at the hatchery where low water can sustain a smaller group. These fish are held at the hatchery for a brief period of time before they are transferred to a seapen off Port Renfrew where they imprint in the marine environemnt. The goal of the seapen releases is to support a terminal fishery; juveniles that have imprinted on nearshore marine waters (rather than the lake or river) are (ideally) more likely to return to these waters as adults and stage here longer than adults with a high drive to return to natal freshwater. The holding/staging of fish in coastal waters provides a fishery opportunity for Pacheedaht members. 
+
+#### Brood collection and release history
+
+```{r message=F, warning=F, echo=F, include=F}
+# ===================== HATCHERY RELEASES/RECOVERIES =====================
+# Just releases -----------------------
+# MRP CWT:
+sj.rel.mrp.sum <- sj.releases.mrp %>% 
+  group_by(`Release Site Name`, `Brood Year`) %>% 
+  summarize(`Total Released` = sum(`Total Released`), CWT_afc = sum(`Num WithCWT Adclip`), untag_afc=sum(`Num NoCWT Adclip`), 
+            untag_unmark = sum(`Num NoCWT NoAdclip`)) %>%
+  mutate(propn_CWTafc = round(CWT_afc/`Total Released`,3)*100, 
+         propn_untagafc = round(untag_afc/`Total Released`,3)*100, 
+         propn_untagunmark = round(untag_unmark/`Total Released`,3)*100, 
+         propn_marked = round((CWT_afc+untag_afc)/`Total Released`,3)*100) %>%
+  arrange(`Brood Year`) %>%
+  rename(`CWT and AFC`=CWT_afc,
+         `AFC only`=untag_afc,
+         Unmarked=untag_unmark,
+         `% CWT and AFC`=propn_CWTafc,
+         `% AFC only`=propn_untagafc,
+         `% umarked`=propn_untagunmark,
+         `Total % marked`=propn_marked) %>% 
+  print()
+
+# SEP: 
+sj.rel.sep.sum <- sj.releases.sep %>% 
+  filter(SPECIES_NAME=="Chinook") %>% 
+  group_by(BROOD_YEAR, FACILITY_NAME) %>%
+  summarize(CWT_AD=sum(TaggedNum,na.rm=T), AD_only=sum(NoTagNum,na.rm=T), unmarked=sum(UnmarkedNum,na.rm=T), tags_lost=sum(ShedTagNum,na.rm=T), total_release=sum(TotalRelease,na.rm=T)) %>% 
+  group_by(BROOD_YEAR) %>% 
+  mutate(`CWT_AD %`=round(CWT_AD/total_release*100,0), `AD_only %`=round(AD_only/total_release*100,0), `unmarked %`=round(unmarked/total_release*100,0)) %>%
+  print()
+
+write.csv(sj.rel.sep.sum, "~/ANALYSIS/data/SanJuan_SEPreleases_jul2022.csv", row.names=F)
+
+
+# Releases that were recovered -----------------------
+# How many
+sj.rel.rcvy %>% 
+  group_by(`(RL) Release Site Name`, `(RL) Brood Year`) %>% 
+  summarize(TOTAL = sum(`(RL) Total Released`), CWT_afc = sum(`(RL) Num WithCWT Adclip`), untag_afc=sum(`(RL) Num NoCWT Adclip`), 
+            untag_unmark = sum(`(RL) Num NoCWT NoAdclip`),
+            total_est_rcvy = sum(`(RC) Estimated Number`, na.rm=T), total_exp_rcvy = sum(`(RC) Expanded Number`, na.rm=T)) %>%
+  arrange(`(RL) Brood Year`, `(RL) Release Site Name`) %>% 
+  group_by(`(RL) Release Site Name`) %>% 
+  mutate(total_RCs_by_RLsite = sum(total_exp_rcvy))
+
+# Where 
+#View(sj.rel.rcvy %>% 
+#  group_by(`(RL) Release Site Name`, `(RL) Brood Year`, `(RC) Reporting Agency Code`, `(RC) Catch Region Name`) %>% 
+#  summarize(TOTAL = sum(`(RL) Total Released`), CWT_afc = sum(`(RL) Num WithCWT Adclip`), untag_afc=sum(`(RL) Num NoCWT Adclip`), 
+#            untag_unmark = sum(`(RL) Num NoCWT NoAdclip`),
+#            total_est_rcvy = sum(`(RC) Estimated Number`, na.rm=T), total_exp_rcvy = sum(`(RC) Expanded Number`, na.rm=T)) %>%
+#  arrange(`(RL) Brood Year`, `(RL) Release Site Name`) %>% 
+#  mutate(region_rollup = case_when(grepl("Central | North Central | Northern")~ "NCBC",
+#                                   grepl("Vancouver Is | WCVI") ~ "WCVI",
+#                                   grepl("Alaska | AK") ~ "AK",
+#                                   grepl("Juan de Fuca | Juan De Fuca") ~ "Juan de Fuca",
+#                                   grepl("Johnstone Strait")  ~ "Johnstone Strait",
+#                                   grepl("WA") ~  "WA",
+#                                   TRUE~as.character(`(RC) Catch Region Name`)
+#                                   )))
+## HERE NEXT DAY: fix above case_when tree (not working)
+
+```
+
+<br>
+
+The figure above shows brood collections over time (as documented in NuSEDS). Hatchery releases from SEP are documented back to 1995, but note that MRP contains San Juan CWT records dating back to BY 1979. From 2013-2017 all seapean releases were marked, but the seapen has not been used in recent years (although hopes to be used for BY 2023). The majority of San Juan chinook releases are unmarked. 
+
+*Table 2. Hatchery releases and marking information for San Juan and tributary Chinook. Data from MRP Extractor. It is assumed all broodstock was collected from the San Juan River, with different release strategy locations indicated by "Release Site Name" (Port Renfrew = juveniles reared in a sea netpen).*
+```{r echo=F, warning=F, message=F}
+# Just Releases ----------------------- 
+sj.rel.sep.sum %>%
+  mutate(across(CWT_AD:total_release, ~ format(., big.mark=",", scientific=F))) %>%
+  #select(FACILITY_NAME,BROOD_YEAR,CWT_AD:`unmarked %`)%>%
+  kbl(align="c") %>%
+  kable_paper("hover", full_width=T, position = "center") %>%
+  collapse_rows(columns=c(1,2), valign="middle")
+```
+
+<br>
+
+```{r message=F, warning=F, echo=F}
+ggplot() +
+  geom_bar(data=sj.rel.sep.sum, aes(x=as.numeric(BROOD_YEAR), y=total_release/200), stat="identity", fill="gray60", width=0.6, alpha=0.5) +
+  geom_line(data=sj.plot%>%filter(`Waterbody Name`=="SAN JUAN RIVER", Species=="Chinook"), 
+            aes(x=as.numeric(`Analysis Year`), y=as.numeric(n), group=CK_est, fill=CK_est, colour=CK_est), size=1, alpha=0.7) +
+  geom_point(data=sj.plot%>%filter(`Waterbody Name`=="SAN JUAN RIVER", Species=="Chinook"), 
+             aes(x=as.numeric(`Analysis Year`), y=as.numeric(n), group=CK_est, fill=CK_est, colour=CK_est), size=3, stroke=1.2, alpha=0.7) +
+  scale_x_continuous(breaks=seq(min(sj.plot$`Analysis Year`), max(sj.plot$`Analysis Year`), by=3)) +
+  scale_y_continuous(limits=c(0,8000), breaks=seq(0,8000,by=2000), sec.axis = sec_axis(~ . * 200, name = "Hatchery releases")) +
+  labs(x="Return Year", y="Number of Chinook", caption="Fig 3. Chinook hatchery releases (gray bars; Table 2) relative to escapement (Figure 1). Data from NuSEDS and \nSEP.") +
+  theme_bw() +
+  theme(axis.text = element_text(colour="black", size=11),
+        axis.text.x = element_text(angle=45, hjust=1),
+        axis.title = element_text(face="bold", size=13),
+        panel.grid = element_blank(),
+        legend.title = element_blank(),
+        legend.position = c(0.8,0.9),
+        legend.background = element_rect(colour="black", fill="transparent"),
+        legend.key = element_rect(fill="transparent"),
+        plot.caption = element_text(face="italic", hjust=0)) 
+```
+
+<br>
+
+#### Thermal marking history 
+
+San Juan chinook have been thermally marked since 2010, according to reference specimens submitted in Otolith Manager. However, BYs 2014-2017 and 2020 all had "NA" quality thermal marks (as opposed to good/acceptable). This poses uncertainty for thermal mark detection in fisheries and escapement recoveries. Of those NAs in 2010-2011, the mark is listed as "NA". Some 2014 specimens also have mark listed as NA, but the majority were "Not Marked". 
+
+```{r echo=F, warning=F, message=F, include=F}
+sj.otoTM.ref <- otoTM.ref %>% 
+  filter(grepl("SAN JUAN", FACILITY)) %>% 
+  group_by(BROOD.YEAR, QUALITY) %>% 
+  summarize(n=n()) %>% 
+  mutate(QUALITY = ifelse(is.na(QUALITY), NA, "Good/Acceptable")) %>% 
+  group_by(BROOD.YEAR) %>% 
+  mutate(quality_total=sum(n), propn=round(n/quality_total*100,1)) %>%
+  print()
+
+sj.otoTM.refNAs <- sj.otoTM.ref %>% 
+  filter(is.na(QUALITY), BROOD.YEAR>=2014) %>% 
+  select(BROOD.YEAR) %>% 
+  mutate(link=100) %>% 
+  print()
+```
+
+```{r echo=F, warning=F, message=F}
+ggplot(sj.otoTM.ref, aes(x=BROOD.YEAR, y=propn, colour=QUALITY, fill=QUALITY)) +
+  geom_bar(stat="identity") +
+  labs(y="Proportion of reference specimens") +
+  theme_bw()
+```
+
+<br>
+
+#### PBT
+
+Parental-based tagging (PBT) is relatively new for San Juan Chinook, beginning in 2017 but only reliable since 2019. From Eric Rondeau, MGL: 
+
+> We’ve received what I believe to be nearly-complete brood in 2018-2021. I would say it is reliable from 2019-2021, as 2018 was missing sex ID information which complicates the process. We received ~1/3 of the brood in 2017, so I would anticipate a limited ability to PBT there as well, but not enough to reliably utilize... I would suggest thought that 2019 is the first brood year I would recommend starting from, so for 2022 age 3. We could probably go back to 2018 (age 4 for 2022) too if we can identify the records on sex of the samples submitted, or we can possibly run genetic sex ID marker (but hatchery records are always preferred).
+
+Note that he says it is possible to have GSI=100% certainty, and can't definitively be prescribed to PBT-alone. Regarding assumed PBT-origin chinook from 2015-2017 recreational catch: 
+
+> I think it is very unlikely that those are genuinely PBT assignments. I would suspect in this case the age was made by some other method, and that the GSI result was ~100% - it is possible the algorithm is interpreting any 100% assignment as a PBT, but this isn’t always the case (you can have a 100% GSI). If it wasn’t specifically marked PBT, but the GSI was 100%, I could see it being interpreted as a PBT but not actually a PBT. Do you have a few fish/Whatman/DNA IDs you could send as an example that I could verify though? We do have individuals in our baseline from San Juan from 2014 and 2015, but these are specifically marked “not brood” and no sexID was provided – these shouldn’t yield PBT IDs. 
+
+> I would suspect in this case that all the “100s” you are looking at are from GSI. This seems slightly more common in the San Juan assignments than I’ve seen elsewhere, but they do pop up. Usually but not always tied to related individuals in the baseline (eg. a brother or uncle, etc.) where the genetic profile is very similar to something we have, thus making the assignment probability quite high. There are a few other reasons, but they start to get more technical, I would suspect relatedness to individuals from the 2014/2015 non-brood reference collections is most likely. I unfortunately don’t think you’ll be able to do the hatchery/natural in San Juan until roughly this year based on PBT alone, it will likely require an additional mark to complement the GSI. Moving ahead, we’ll be able to do so confidently (with ages), but with brood only going back to ~19, there will be limited resolution based solely on PBT until now. 
+
+<br>
+
+#### PNI
+
+Given the uncertainty in thermal mark quality from BYs 2014-2017 and 2020 (contributing to fisheries and escapements from 2017 onward), it is difficult to estimate PNI for San Juan Chinook. From Jacob Weil: 
+
+> PNI.tot is the value of PNI that SEP would have (includes all fish returning to the river) and PNI.local is a value derived by me that shows what the PNI would be if all strayed fish were excluded in the calculation. In 2015, we have NA values because we do not have data for pNOB... Strayed fish (not from San Juan hatchery production), are not often a significant proportion of the escapement estimate and thus do not depress PNI values substantially.
+
+<br>
+
+*Table 3. Proportion of hatchery-origin chinook in spawners (pHOS) and resulting Proportion of Natural Influence (PNI) for San Juan Chinook. Data from Jacob Weil, DFO.*
+
+```{r echo=F, message=F, warning=F}
+sj.pni %>%
+  kbl(align="c") %>%
+  kable_paper("hover", full_width=T, position = "center") %>%
+  collapse_rows(columns=c(1), valign="middle") 
+```
+
+<br>
+
+```{r echo=F, warning=F, message=F, include=F}
+sj.pni.plot <- sj.esc.raw %>% 
+  filter(Species=="Chinook", `Waterbody Name`=="SAN JUAN RIVER") %>%
+  mutate_at(c("Natural Adult Spawners", "Analysis Year", "Max Estimate"), as.numeric) %>%
+  group_by(`Analysis Year`) %>% 
+  summarize(System=unique(`Waterbody Name`), 
+            `Adult Spawners` = ifelse(is.na(`Natural Adult Spawners`), sum(`Max Estimate`), sum(`Natural Adult Spawners`))) %>% 
+  rename(Year=`Analysis Year`) %>% 
+  left_join(., sj.pni) %>%
+  mutate(HOS=round(`Adult Spawners`*pHOS,0),  NOS=round(`Adult Spawners`*(1-pHOS),0)) %>%
+  select(System, Year, `Adult Spawners`, pHOS, marked, tot.sampled,strays,PNI.tot, PNI.local, HOS, NOS) %>% 
+  print()
+```
+
+```{r echo=F, message=F, warning=F}
+ggplot() +
+  geom_bar(data=sj.pni.plot %>% pivot_longer(cols=c(HOS, NOS), names_to = "source", values_to = "n_spawners") %>% 
+             mutate(source = ifelse(is.na(pHOS), "Total spawners", source), n_spawners = ifelse(source=="Total spawners", `Adult Spawners`, n_spawners)) %>% 
+             group_by(Year, source)%>% 
+             summarize(n_spawners=sum(n_spawners)) %>% filter(Year>=2005), 
+           aes(x=Year, y=n_spawners, group=Year, colour=source, fill=source), stat="identity", position="stack", alpha=0.6, size=1) +
+  geom_line(data=sj.pni.plot%>%filter(!is.na(PNI.local)), aes(x=Year, y=PNI.local*10000), size=1, alpha=0.5) +
+  geom_point(data=sj.pni.plot%>%filter(!is.na(PNI.local)), aes(x=Year, y=PNI.local*10000), size=3, shape=21, alpha=0.8, stroke=1, colour="black", fill="black") +
+  scale_y_continuous(sec.axis = sec_axis(~./10000, name = "PNI")) +
+  scale_x_continuous(breaks=seq(2004,2020,by=1)) +
+  scale_colour_manual(values=c("#F8766D", "#00BFC4", "gray50")) +
+  scale_fill_manual(values=c("#F8766D", "#00BFC4", "gray50")) +
+  labs(x="Brood year", y="Adult Chinook spawner abundance", caption="Fig 4. Hatchery-origin (HOS) and natural-origin (NOS) adult Chinook spawners in the San Juan River and \nresulting PNI.local (black). HOS calculated from Adult Spawners*pHOS, and NOS from Adult Spawners*(1-pHOS) \nfrom Table 3 above.") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text = element_text(colour="black", size=11),
+        axis.text.x = element_text(angle=45, hjust=1),
+        axis.title = element_text(face="bold", size=13),
+        legend.position = c(0.8,0.80),
+        legend.background = element_rect(colour="black"),
+        legend.title = element_blank(),
+        plot.caption = element_text(hjust=0, face="italic"))
+```
+
+
+<br>
+
+<br>
+
+<br> 
+
+### **Recreational Catch** 
+
+#### Stock ID and origin
+
+<br>
+
+```{r message=F, warning=F, echo=F, include=F}
+# ===================== REC CATCH =====================
+# Replace Resolved_stock_origin because it's not as conservative as it should be (PVW discussion)
+# n = 360 total San Juan River fish based on CREST Excel file RESOLVED_STOCK_ORIGIN=="San Juan River" 
+# n = 24 with PROB_1<0.7  (n=22 with no CWT or oto marks AND PROB_1<0.7)
+# n = 23 with PROB_1==" "
+
+# Re-do stock, source and hatchery origin assignment -------------------------
+rec.biodat <- rec.catch.biodata %>% 
+  #select(-c(RECEIVED_SCALES:SCALE_SUBMISSION_NUMER, BIOKEY:FISH_NO,REFERENCE_NO,COLLECTION_DATE,DAYOFYEAR,FISHING_LOCATION:SPECIES,SIZE_CAT,LENGTH_MM,SEX,
+  #          OTOLITH_BOX,OTOLITH_SPECIMEN,SCALE_BOOK:PART_AGE_CODE, CWT_BROOD_YEAR:RESOLVED_STOCK_REGION,DNA_STOCK_3:FisheryCatRegion2)) %>%
+  mutate(BY = YEAR-RESOLVED_AGE,
+         # CWT ------------------------
+         # If CWTs aren't messy, use CWT, otherwise blank
+         RESOLVED_STOCK_ORIGIN2 = ifelse(!CWT_RESULT%in%c(is.na(CWT_RESULT), "No Tag", "Lost Tag", "No Head", grepl("No Result", CWT_RESULT)),
+                                         CWT_RESULT, NA),
+         # If the stock ID isn't blank, it's CWT
+         RESOLVED_STOCK_SOURCE2 = ifelse(!is.na(RESOLVED_STOCK_ORIGIN2), "CWT", NA),
+         
+         
+         # OTOLITH ------------------------
+         # if there's still no stock ID and there is otolith marks, use otoliths, otherwise blank
+         RESOLVED_STOCK_ORIGIN2 = ifelse(is.na(RESOLVED_STOCK_ORIGIN2) & !is.na(OTO_STOCK) & !is.na(OTOLITH_RESOLVED_RESULT), OTOLITH_RESOLVED_RESULT, 
+                                         RESOLVED_STOCK_ORIGIN2),
+         # If stock ID isn't blank (ie, there is a stock ID) but the source is unknown, it's oto
+         RESOLVED_STOCK_SOURCE2 = ifelse(!is.na(RESOLVED_STOCK_ORIGIN2) & is.na(RESOLVED_STOCK_SOURCE2), "OTO", RESOLVED_STOCK_SOURCE2),
+
+         
+         # PBT ------------------------
+         # If there's still no stock ID and there is high genetic certainty in stock 1 alone and it falls in the right BYs, take the GSI (PBT)
+         RESOLVED_STOCK_ORIGIN2 = ifelse(is.na(RESOLVED_STOCK_ORIGIN2) & PROB_1>=0.9999999 & 
+                                           is.na(DNA_STOCK_2) & BY%in%c(2017,2018), REGION_1_NAME, RESOLVED_STOCK_ORIGIN2),
+         # If stock ID isn't blank (ie, there is a stock ID) but the source is unknown, it's PBT
+         RESOLVED_STOCK_SOURCE2 = ifelse(!is.na(RESOLVED_STOCK_ORIGIN2) & is.na(RESOLVED_STOCK_SOURCE2), "PBT (uncertain)", RESOLVED_STOCK_SOURCE2),
+
+         
+         # GSI (100%) ------------------------
+         # If there's still no stock ID and there is a high genetic certainty in stock 1, take GSI (GSI certain)
+         RESOLVED_STOCK_ORIGIN2 = ifelse(is.na(RESOLVED_STOCK_ORIGIN2) & PROB_1>=0.9999999, REGION_1_NAME, RESOLVED_STOCK_ORIGIN2),
+         # If stock ID isn't blank (ie, there is a stock ID) but the source is unknown, it's GSI (GSI certain)
+         RESOLVED_STOCK_SOURCE2 = ifelse(!is.na(RESOLVED_STOCK_ORIGIN2) & is.na(RESOLVED_STOCK_SOURCE2), "GSI (100%)", RESOLVED_STOCK_SOURCE2),
+
+         
+         # GSI (70%) ------------------------
+         # If there's still no stock ID and there is a moderately high genetic certainty in stock 1, take GSI (GSI meh) 
+         RESOLVED_STOCK_ORIGIN2 = ifelse(is.na(RESOLVED_STOCK_ORIGIN2) & PROB_1>=0.7, REGION_1_NAME, RESOLVED_STOCK_ORIGIN2),
+         # If stock ID isn't blank (ie, there is a stock ID) but the source is unknown, it's GSI (GSI certain)
+         RESOLVED_STOCK_SOURCE2 = ifelse(!is.na(RESOLVED_STOCK_ORIGIN2) & is.na(RESOLVED_STOCK_SOURCE2), "GSI (70%)", RESOLVED_STOCK_SOURCE2),
+         
+  
+         RESOLVED_STOCK_ROLLUP2 = ifelse(RESOLVED_STOCK_ORIGIN2%in%c("San Juan River", "Port Renfrew Seapen"), "SWVI", 
+                                        RESOLVED_STOCK_ROLLUP),
+         
+         HATCHERY_ORIGIN = case_when(ADIPOSE_FIN_CLIPPED=="Y" | RESOLVED_STOCK_SOURCE2%in%c("CWT", "OTO", "PBT (uncertain)") ~ "Y",
+                                     ADIPOSE_FIN_CLIPPED!="Y" | is.na(ADIPOSE_FIN_CLIPPED) & 
+                                       !RESOLVED_STOCK_SOURCE2%in%c("CWT", "OTO", "PBT (uncertain)") ~ "unk"))
+
+sj.rec.biodat <- rec.biodat %>%
+  filter(RESOLVED_STOCK_ORIGIN2%in%c("San Juan River", "Port Renfrew Seapen")) 
+
+
+# Export if needed ------------------------- 
+recbiodata <- createWorkbook()                    
+addWorksheet(recbiodata, "All biodata")
+addWorksheet(recbiodata, "SJ biodata") 
+writeData(recbiodata, "All biodata", rec.biodat) 
+writeData(recbiodata, "SJ biodata", sj.rec.biodat)
+saveWorkbook(recbiodata, "~/ANALYSIS/data/CREST_biodat_KD_Jul2022.xlsx", overwrite = TRUE) 
+
+
+# Total source data types -------------------------
+sj.rec.biodat %>% group_by(HATCHERY_ORIGIN) %>% summarize(n())
+
+# Annual source data types -------------------------
+sj.rec.biodat %>% group_by(YEAR, RESOLVED_STOCK_SOURCE2 ) %>% summarize(n=n())
+
+## **** HERE NEXT DAY: INVESTIGATE THE RESOLVED_STOCK_SOURCE2==NA ENTRIES (maybe ok and just filter them out?)
+```
+
+*Table 4. Stock ID methods used for Chinook sport catch.*
+
+```{r echo=F, warning=F, message=F}
+# Annual source data types by hatchery origin -------------------------
+sj.rec.biodat %>% 
+  group_by(YEAR, HATCHERY_ORIGIN, RESOLVED_STOCK_SOURCE2 ) %>% 
+  summarize(n=n()) %>%
+  select(YEAR, HATCHERY_ORIGIN, RESOLVED_STOCK_SOURCE2, n) %>%
+  kbl(align="c") %>%
+  kable_paper("hover", full_width=T, position = "center") %>%
+  collapse_rows(columns=c(1), valign="middle")  
+```
+
+```{r echo=F, warning=F, message=F, include=F}
+# Annual % hatchery origin by CATCH YEAR -------------------------
+sj.hoCY <- sj.rec.biodat %>% 
+  group_by(YEAR, HATCHERY_ORIGIN) %>% 
+  summarize(n=n()) %>% 
+  group_by(YEAR) %>% 
+  mutate(total=sum(n), propn = round(n/total*100, 1)) %>%
+  select(YEAR, total, HATCHERY_ORIGIN, n , propn) %>%
+  rename(`Catch Year`=YEAR) %>% 
+  print()
+
+# Annual % hatchery origin by BROOD YEAR -------------------------
+sj.hoBY <- sj.rec.biodat %>% 
+  group_by(BY, HATCHERY_ORIGIN) %>% 
+  summarize(n=n()) %>% 
+  group_by(BY) %>% 
+  mutate(total=sum(n), propn = round(n/total*100, 1)) %>%
+  select(BY, total, HATCHERY_ORIGIN, n , propn) %>%
+  rename(`Brood Year`=BY) %>% 
+  print()
+
+
+
+# Incomplete tag rate expansions -------------------------
+# EXPAND FOR PBT: BY 2017 had 38% PBT mark rate, therefore expand 
+sj.ho.expCY <- sj.rec.biodat %>% 
+  group_by(YEAR, BY, HATCHERY_ORIGIN, RESOLVED_STOCK_SOURCE2) %>% 
+  summarize(n=n()) %>% 
+  mutate(n_expanded = ifelse(RESOLVED_STOCK_SOURCE2=="PBT (uncertain)" & BY==2017, round(n/0.38,2), n)) %>% 
+  group_by(YEAR, HATCHERY_ORIGIN) %>% 
+  summarize(n_expanded = sum(n_expanded)) %>% 
+  group_by(YEAR) %>% 
+  mutate(propn_expanded = round(n_expanded/sum(n_expanded)*100,1)) %>%
+  rename(`Catch Year`=YEAR) %>% 
+  print()
+
+sj.ho.expBY <- sj.rec.biodat %>% 
+  group_by(YEAR, BY, HATCHERY_ORIGIN, RESOLVED_STOCK_SOURCE2) %>% 
+  summarize(n=n()) %>% 
+  mutate(n_expanded = ifelse(RESOLVED_STOCK_SOURCE2=="PBT (uncertain)" & BY==2017, round(n/0.38,2), n)) %>% 
+  group_by(BY, HATCHERY_ORIGIN) %>% 
+  summarize(n_expanded = sum(n_expanded)) %>% 
+  group_by(BY) %>% 
+  mutate(propn_expanded = round(n_expanded/sum(n_expanded)*100,1)) %>%
+  rename(`Brood Year`=BY) %>% 
+  print()
+
+# EXPAND FOR THERMAL MARKS**** ?
+# EXPAND FOR CWT**** ?
+```
+
+<br>
+
+```{r echo=F, message=F, warning=F}
+ggplot() +
+  geom_bar(data=sj.hoCY, 
+           aes(x=`Catch Year`, y=propn, group=HATCHERY_ORIGIN, fill=HATCHERY_ORIGIN, colour=HATCHERY_ORIGIN), 
+           stat="identity", position="stack", alpha=0.5, size=1) +
+  geom_bar(data=sj.ho.expCY, 
+           aes(x=`Catch Year`, y=propn_expanded, group=HATCHERY_ORIGIN, fill=HATCHERY_ORIGIN, colour=HATCHERY_ORIGIN), 
+           stat="identity", position="stack", alpha=0.5, size=1) +
+  scale_x_continuous(breaks=seq(2014,2021,by=1)) +
+  labs(x="Catch year", y="Proportion of sport catch biosamples (%)", caption="Fig 5. Proportion of Chinook sport catch from hatchery (Y, blue) and unknown (unk, pink) sources. Overlapping shading \nin 2020-2021 indicates potential expansion of hatchery-origin Chinook due to incomplete parental-based tagging of \nBY2017 (38% tagged).") +
+  theme_bw() +
+  theme(axis.text = element_text(colour="black"),
+        axis.title = element_text(face="bold"),
+        panel.grid = element_blank(),
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        plot.caption = element_text(face="italic", hjust=0))
+```
+
+```{r echo=F, message=F, warning=F}
+ggplot() +
+  geom_bar(data=sj.hoBY, 
+           aes(x=`Brood Year`, y=propn, group=HATCHERY_ORIGIN, fill=HATCHERY_ORIGIN, colour=HATCHERY_ORIGIN), 
+           stat="identity", position="stack", alpha=0.5, size=1) +
+  geom_bar(data=sj.ho.expBY, 
+           aes(x=`Brood Year`, y=propn_expanded, group=HATCHERY_ORIGIN, fill=HATCHERY_ORIGIN, colour=HATCHERY_ORIGIN), 
+           stat="identity", position="stack", alpha=0.5, size=1) +
+  geom_point(data=sj.otoTM.refNAs, aes(x=as.numeric(BROOD.YEAR), y=link), size=2) +
+  scale_x_continuous(breaks=seq(2010,2020,by=1)) +
+  labs(x="Brood year catch originated from", y="Proportion of sport catch biosamples (%)", caption="Fig 5. Proportion of Chinook sport catch from hatchery (Y, blue) and unknown (unk, pink) sources. Overlapping \nshading indicates potential expansion of hatchery-origin Chinook due to incomplete parental-based tagging of BY2017 \n(38% tagged). Black dots indicate years with incomplete thermal marking releases, thus the hatchery component may \nbe higher than given.") +
+  theme_bw() +
+  theme(axis.text = element_text(colour="black"),
+        axis.title = element_text(face="bold"),
+        panel.grid = element_blank(),
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        plot.caption = element_text(face="italic", hjust=0))
+```
+
+<br>
+
+#### San Juan chinook recoveries
+
+##### Otolith thermal mark recoveries
+
+```{r include=F, echo=F, warning=F, message=F}
+# ================ From Otolith Thermal data recovery specimens  ================
+sjoto.rcvyAA <- otoTM.rcvyAA %>% 
+  filter(grepl("SAN JUAN", FACILITY)) %>% 
+  group_by(RCVY.LOCATIONS) %>%
+  summarize(n()) %>% 
+  pull(RCVY.LOCATIONS)
+
+sj.TMrcvy.AA <- otoTM.rcvyAA %>% 
+  filter(RCVY.LOCATIONS %in% sjoto.rcvyAA) %>% 
+  filter(!is.na(RCVY.LOCATIONS)) %>%
+  group_by(SOURCE, SAMPLE.YR, RCVY.LOCATIONS, FACILITY) %>% 
+  summarize(n=n()) %>% 
+  mutate(FACILITY2 = ifelse(grepl("SAN JUAN", FACILITY), "SAN JUAN RIVER HATCHERY", ifelse(is.na(FACILITY), "unk", "Other hatchery"))) %>% 
+  group_by(SOURCE, SAMPLE.YR, RCVY.LOCATIONS, FACILITY2) %>% 
+  summarize(n=sum(n)) %>% 
+  group_by(SOURCE, SAMPLE.YR, RCVY.LOCATIONS) %>% 
+  mutate(total=sum(n), `Proportion (%)`=round(n/total*100,0)) %>% 
+  print()
+```
+
+Most San Juan thermal marks have historically been recovered in escapement sampling. Few to no San Juan thermal marks have been recovered in sport fisheries as recorded in the Otolith Manager database. 
+
+<br>
+
+*Table. All areas where San Juan otolith thermal marks have been recovered historically, extracted from Otolith Manager. \n'unk' refers to otoliths submitted without a thermal mark. Corresponds to figure below.*
+
+```{r echo=F, warning=F, message=F}
+sj.TMrcvy.AA %>%
+  select(SOURCE, SAMPLE.YR, total, RCVY.LOCATIONS, FACILITY2, n, `Proportion (%)`) %>%
+  kbl(align="c") %>%
+  kable_paper("hover", full_width=T, position = "center") %>%
+  collapse_rows(columns=c(1,2,3), valign="middle")  
+```
+
+<br>
+
+```{r echo=F, warning=F, message=F, out.width="90%"}
+ggplot(data=sj.TMrcvy.AA%>%filter(SOURCE!="FSC - Escapement"), aes(x=SAMPLE.YR, y=`Proportion (%)`, group=FACILITY2, fill=FACILITY2, colour=FACILITY2)) +
+  geom_bar(stat="identity", position="stack", alpha=0.7) +
+  labs(x="Sample year", caption="Fig. All areas where San Juan otolith thermal marks have been recovered historically, extracted from Otolith Manager. \n'unk' refers to otoliths submitted without a thermal mark. Corresponds to table above (FSC-Escapement is excluded for \nvisualization).") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=45, hjust=1),
+        axis.text = element_text(colour="black"),
+        axis.title = element_text(face="bold"),
+        panel.grid = element_blank(),
+        plot.caption = element_text(hjust=0, face="italic"),
+        legend.position=c(0.85,0.1)) +
+  facet_wrap(.~ SOURCE + RCVY.LOCATIONS, scales="free", nrow=3)
+```
+
+<br>
+
+##### Recreational catch sample summary
+
+Prior to Chinook management measures implemented in 2019, the composition of the sport fishery west of Juan de Fuca (subareas 20A,B,C,E) mostly consisted of US catch, as well as Fraser Summer 4.1 and SWVI stocks.
+
+```{r echo=F, include=F, message=F, warning=F}
+a20.crest.comp <- rec.biodat %>% 
+  filter(SUBAREA%in%c("20A","20B","20C","20E"), `NEW DISPOSITION`=="Legal") %>% 
+  group_by(YEAR, RESOLVED_STOCK_ROLLUP2, RESOLVED_STOCK_ORIGIN2) %>% 
+  summarize(n=n()) %>% 
+  mutate(region=ifelse(grepl("Fraser",RESOLVED_STOCK_ROLLUP2) | str_detect(RESOLVED_STOCK_ROLLUP2, "VI") | 
+                         grepl("NANAIMO", RESOLVED_STOCK_ROLLUP2) | grepl("Mainland", RESOLVED_STOCK_ROLLUP2), RESOLVED_STOCK_ROLLUP2, "US")) %>% 
+  group_by(YEAR, region) %>% 
+  summarize(n=sum(n)) %>%
+  group_by(YEAR) %>% 
+  mutate(total=sum(n), propn = round(n/total,2)) %>%
+  select(YEAR, total, region, n, propn) %>%   #RESOLVED_STOCK_ROLLUP2, RESOLVED_STOCK_ORIGIN2
+  arrange(YEAR, -propn) %>% 
+  print()
+
+write.csv(a20.crest.comp %>% select(YEAR, region, propn) %>% pivot_wider(names_from=YEAR, values_from = propn) %>% arrange(region), "~/ANALYSIS/data/CREST_area20_summary.csv", row.names=F)
+```
+
+
+```{r echo=F, warning=F, message=F}
+a20.crest.comp %>%
+  mutate(propn=propn*100)  %>%
+  kbl(align="c") %>%
+  kable_paper("hover", full_width=T, position = "center") %>%
+  collapse_rows(columns=c(1,2), valign="middle")
+```
+
+Otolith thermal marks are not the only means of identifying where San Juan chinook are recovered, but to date methods are limited as PBT is very new, and only a fraction of releases are adipose-clipped/CWT'd. 
+
+```{r include=F, echo=F}
+sj.crestrcvy.AA <- rec.biodat %>% 
+  filter(RESOLVED_STOCK_ORIGIN2%in%c("San Juan River", "Port Renfrew Seapen"), `NEW DISPOSITION`=="Legal") %>% 
+  group_by(YEAR, AREA, HATCHERY_ORIGIN, RESOLVED_STOCK_ORIGIN2) %>% 
+  summarize(n=n()) %>% 
+  pull(AREA)
+
+sj.crestrcvy.AAs <- rec.biodat %>% 
+  filter(AREA%in%sj.crestrcvy.AA) %>% 
+  group_by(YEAR, AREA, HATCHERY_ORIGIN, RESOLVED_STOCK_ORIGIN2) %>% 
+  summarize(n=n()) %>% 
+  mutate(origin_rollup=ifelse(!RESOLVED_STOCK_ORIGIN2%in%c("San Juan River", "Port Renfrew Seapen"), "Other/unk", RESOLVED_STOCK_ORIGIN2)) %>% 
+  group_by(YEAR, AREA, origin_rollup) %>% 
+  summarize(n=n()) %>% 
+  group_by(YEAR, AREA) %>% 
+  mutate(total=sum(n), propn=round(n/total*100,0)) %>% 
+  print()
+```
+
+```{r}
+ggplot(data=sj.crestrcvy.AAs%>% filter(origin_rollup!="Other/unk"), aes(x=YEAR, y=propn, fill=origin_rollup, colour=origin_rollup)) +
+  geom_bar(stat="identity", position="stack", alpha=0.5) +
+  labs(x="Catch year", y="Proportion of sport catch biosamples (%)", caption="Fig. Proportion of San Juan/Port Renfrew chinook caught in all recreational fisheries. Note they constitute <10% of \ncatch in any given year. Data from a random sample of chinook identified by CWT, otolith thermal marks and/or DNA \nfrom CREST.") +
+  scale_y_continuous(limits=c(0,15)) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_text(angle=45, hjust=1, colour="black"),
+        axis.text = element_text(colour="black"),
+        axis.title = element_text(face="bold"),
+        plot.caption = element_text(hjust=0, face="italic")) +
+  facet_wrap(.~AREA)
+```
+
+
+
+
+
+
+
+
+
+
+
+

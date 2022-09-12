@@ -1,5 +1,5 @@
 
-# CONUMA Chinook terminal run reconstruction re-vamp
+# CONUMA Chinook terminal run reconstruction
 # June 2022
 
 # set wd and settings -------------------
@@ -13,7 +13,7 @@ library(readxl)
 
 # =================== Load and clean data ===================
 
-# REC -------------------
+# RECREATIONAL -------------------
 # Catch
 rec.catch <- read_excel("2021_SPORT_CATCH_DATA-SC Sport Catch Creel Sub-area Disposition.xlsx", sheet="YTD") %>%
   mutate(MONTH = factor(MONTH, levels=month.name),
@@ -39,7 +39,7 @@ rec.ages <- read_excel("2020-21_CHINOOK_BIODATA_from_CREST-WCVI_CN_RunRecon_Quer
 # Stock comp from reccomm.comp below
 
 
-# COMM (GN/SN) -------------------
+# COMMERCIAL (GN/SN) -------------------
 # Catch
 comm.catch <- read_excel("FOS Dump for 2021 Fisheries (Feb 10, 2022).xlsx", sheet="fos_VANWILLP", n_max=Inf, guess_max=20000, skip=2) %>%
   mutate(year = lubridate::year(FISHING_DATE),
@@ -63,7 +63,7 @@ reccomm.comp <- read_excel("2020-21_CHINOOK_BIODATA_from_CREST-WCVI_CN_RunRecon_
   print()
 
 
-# COMM (5N ISBM) -------------------
+# COMMERCIAL (5N ISBM) -------------------
 # Catch
 n5.catch <- rbind(
   read_excel("Five Nations 2021 Catch by PFMA by Month_nearshore.xlsx", sheet="Sheet1", range="I2:J3") %>%

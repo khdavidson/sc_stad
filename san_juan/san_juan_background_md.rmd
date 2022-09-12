@@ -117,13 +117,14 @@ setwd("~/ANALYSIS/data")
 
 # Pull data -----------------------
 # If you get a 'Error: std::bad_alloc' message, close R and re-open 
-sj.esc.raw <- getNuSEDS("~/ANALYSIS/data/query_docs_misc/nuseds_esc_query_SJ.json", password="babysharkd0d0!")
-sj.age.raw <- getNuSEDS("~/ANALYSIS/data/query_docs_misc/nuseds_padsCU_query_SJ.json", password="babysharkd0d0!") 
+sj.esc.raw <- getNuSEDS("~/ANALYSIS/data/queryDocsMisc/nuseds_esc_query_SJ.json", password="babysharkd0d0!") %>% 
+  filter(!grepl("SOUTH THOMPSON", `Conservation Unit Name`))   # Remove the Harris Creek from S Thompson/Bessette 
+sj.age.raw <- getNuSEDS("~/ANALYSIS/data/queryDocsMisc/nuseds_padsCU_query_SJ.json", password="babysharkd0d0!") 
 rec.catch.biodata <- read_excel("Biological_Data_With_Results (April12,2022) SPORT version jun22 v2.xlsx", sheet="BiologicalDATA", skip=4, guess_max = 20000)
-sj.releases.mrp <- getExtractorData("~/ANALYSIS/data/query_docs_misc/mrp_releases_SJ.json", password = "babysharkd0d0!") %>%
+sj.releases.mrp <- getExtractorData("~/ANALYSIS/data/queryDocsMisc/mrp_releases_SJ.json", password = "babysharkd0d0!") %>%
     mutate_at(c(73:87), as.numeric) 
 sj.releases.sep <- read_excel("San Juan Release Report_SEP.xlsx",sheet="Sheet1")
-sj.rel.rcvy <- getExtractorData("~/ANALYSIS/data/query_docs_misc/mrp_release_recovery_SJ.json", password = "babysharkd0d0!") %>% 
+sj.rel.rcvy <- getExtractorData("~/ANALYSIS/data/queryDocsMisc/mrp_release_recovery_SJ.json", password = "babysharkd0d0!") %>% 
   mutate_at(c(33:45, 126:127), as.numeric)
 sj.pni <- read_excel("SanJuan_PNI_JW.xlsx", sheet="Sheet1")
 sj.pbt <- read_excel("SanJuan_pbt_mgl_jul2022.xlsx", sheet="Sheet1")
@@ -143,13 +144,18 @@ otoTM.rcvyAA <- read.csv("OTOMGR_RecoverySpecimensAgesMerged_AllAreas_CK_2000-20
 ```{r include=F, message=F, warning=F, echo=F}
 # ===================== ESCAPEMENT =====================
 sj.plot <- sj.esc.raw %>% 
-  select(`Waterbody Name`, Species, `Analysis Year`, `Max Estimate`, `Total Broodstock Removals`) %>% 
-  mutate(`Max Estimate` = ifelse(`Max Estimate`=="", NA, `Max Estimate`),
-         `Total Broodstock Removals` = ifelse(`Total Broodstock Removals`=="", NA, ifelse(`Total Broodstock Removals`==0, NA, `Total Broodstock Removals`))) %>% 
-  mutate_at(c("Total Broodstock Removals", "Max Estimate"), as.numeric) %>%
-  #filter(!is.na(`Max Estimate`)) %>% 
-  pivot_longer(cols=c("Max Estimate", "Total Broodstock Removals"), names_to = "CK_est", values_to = "n") %>% 
-  #mutate(n = ifelse(n=="", NA, n)) %>%
+  select(`Waterbody Name`, Species, `Analysis Year`, `Max Estimate`, `Total Broodstock Removals`, `Natural Jack Spawners`, `Natural Adult Spawners`) %>% 
+  mutate_at(c("Natural Jack Spawners", "Natural Adult Spawners"), as.numeric) %>%
+  mutate(`Natural Jack Spawners` = ifelse(is.na(`Natural Jack Spawners`),0,`Natural Jack Spawners`),
+         `Natural Adult Spawners` = ifelse(is.na(`Natural Adult Spawners`),0,`Natural Adult Spawners`),
+         `Natural spawners` = ifelse(`Natural Adult Spawners`+`Natural Jack Spawners`==0, `Max Estimate`, 
+                                           `Natural Jack Spawners`+`Natural Adult Spawners`),
+         `Total Broodstock Removals` = ifelse(`Total Broodstock Removals`=="", NA, 
+                                         ifelse(`Total Broodstock Removals`==0, NA, `Total Broodstock Removals`))) %>% 
+  mutate_at(c("Analysis Year","Max Estimate","Total Broodstock Removals","Natural spawners"), as.numeric) %>%
+  rename(`Broodstock removals`=`Total Broodstock Removals`) %>%
+  pivot_longer(cols=c("Max Estimate": "Natural spawners"), names_to = "CK_est", values_to = "n") %>% 
+
   print()
 
 
@@ -196,20 +202,72 @@ The adult age structure is primarily 3, 4 and 5 year olds. Jacks and 6 year olds
 
 ```{r message=F, warning=F, echo=F}
 # SJ Chinook only ----------------------- 
-ggplot(sj.plot %>% filter(`Waterbody Name`=="SAN JUAN RIVER", Species=="Chinook"), 
-       aes(x=as.numeric(`Analysis Year`), y=as.numeric(n), fill=CK_est, colour=CK_est)) +
-  geom_line(size=1, alpha=0.7) +
-  geom_point(size=3, stroke=1.2, alpha=0.7) +
+ggplot() +
+  
+  geom_segment(aes(x=1999,
+                   xend=sj.plot %>% 
+                     filter(`Waterbody Name`=="SAN JUAN RIVER", Species=="Chinook", CK_est=="Broodstock removals", !is.na(n)) %>% 
+                     summarize(max=max(`Analysis Year`))%>%
+                     pull(max),
+                   y=sj.plot %>% 
+                     filter(`Waterbody Name`=="SAN JUAN RIVER", Species=="Chinook",CK_est%in%c("Natural spawners", "Broodstock removals"), 
+                            `Analysis Year`>=1998) %>% 
+                     group_by(`Analysis Year`) %>% 
+                     summarize(sum=sum(n,na.rm=T)) %>% 
+                     summarize(mean=mean(sum,na.rm=T)) %>%
+                     pull(mean),
+                   yend=sj.plot %>% 
+                     filter(`Waterbody Name`=="SAN JUAN RIVER", Species=="Chinook",CK_est%in%c("Natural spawners", "Broodstock removals"), 
+                            `Analysis Year`>=1998) %>% 
+                     group_by(`Analysis Year`) %>% 
+                     summarize(sum=sum(n,na.rm=T)) %>% 
+                     summarize(mean=mean(sum,na.rm=T)) %>%
+                     pull(mean)),
+               colour="red", size=1, linetype="solid") +
+  
+    geom_segment(aes(x=sj.plot %>% 
+                     filter(`Waterbody Name`=="SAN JUAN RIVER", Species=="Chinook", CK_est=="Broodstock removals", is.na(n)) %>% 
+                     summarize(min=min(`Analysis Year`))%>%
+                     pull(min),
+                   xend=1994,
+                   y=sj.plot %>% 
+                     filter(`Waterbody Name`=="SAN JUAN RIVER", Species=="Chinook",CK_est%in%c("Natural spawners", "Broodstock removals"), 
+                            `Analysis Year`<1995) %>% 
+                     group_by(`Analysis Year`) %>% 
+                     summarize(sum=sum(n,na.rm=T)) %>% 
+                     summarize(mean=mean(sum,na.rm=T)) %>%
+                     pull(mean),
+                   yend=sj.plot %>% 
+                     filter(`Waterbody Name`=="SAN JUAN RIVER", Species=="Chinook",CK_est%in%c("Natural spawners", "Broodstock removals"), 
+                            `Analysis Year`<1995) %>% 
+                     group_by(`Analysis Year`) %>% 
+                     summarize(sum=sum(n,na.rm=T)) %>% 
+                     summarize(mean=mean(sum,na.rm=T)) %>%
+                     pull(mean)),
+               colour="red", size=1, linetype="solid") +
+  
+  #geom_hline(aes(yintercept=sj.plot %>% 
+  #                 filter(`Waterbody Name`=="SAN JUAN RIVER", Species=="Chinook", CK_est%in%c("Natural spawners", "Broodstock removals")) %>%
+  #                 group_by(`Analysis Year`) %>% 
+  #                 summarize(sum=sum(n, na.rm=T)) %>% 
+  #                 summarize(mean=mean(sum), sd(sum)) %>%
+  #                 pull(mean)),
+  #           colour="red", linetype="solid", size=1) +
+  geom_bar(data=sj.plot %>% filter(`Waterbody Name`=="SAN JUAN RIVER", Species=="Chinook", CK_est%in%c("Natural spawners", "Broodstock removals")), 
+           aes(x=as.numeric(`Analysis Year`), y=as.numeric(n), group=CK_est, fill=CK_est),
+           stat="identity", position="stack", size=0.7, width=1, colour="black") +
   scale_y_continuous(breaks=seq(0,8000,by=1000)) +
   scale_x_continuous(breaks=seq(min(sj.plot$`Analysis Year`), max(sj.plot$`Analysis Year`), by=7)) +
-  labs(x="Return Year", y="Number of Chinook", caption="Fig 1. Maximum Chinook escapement estimate and broodstock removals (both include jacks) for San Juan \nChinook (excludes tributaries). Data from NuSEDS.") +
+  scale_fill_manual(breaks = c("Natural spawners", "Broodstock removals"), values=c("dodger blue","orange")) +
+  labs(x="Return Year", y="Number of San Juan Chinook", caption="Fig 1. Total natural spawners (jack+adult) and broodstock removals for San Juan Chinook. Red lines indicate \naverage escapements (spawenrs+brood) before and after hatchery activities began. Data from NuSEDS") +
   theme_bw() +
-  theme(axis.text = element_text(colour="black"),
-        axis.title = element_text(face="bold"),
+  theme(axis.text = element_text(colour="black", size=10),
+        axis.title = element_text(face="bold", size=12),
         panel.grid = element_blank(),
         legend.position = c(0.8,0.9),
         legend.background = element_rect(colour="black"),
         legend.title = element_blank(),
+        legend.text = element_text(size=10),
         plot.caption = element_text(hjust=0, face="italic"))
 ```
 
@@ -313,9 +371,11 @@ ggplot() +
 
 ### **Enhancement activity**
 
-The 4 Mile Creek Enhancement Society operates the 4 Mile Hatchery to enahnce San Juan chinook. The current board of directors is composed of the society members, hatchery managers, Pacheedaht and MOSAIC representatives. The hatchery is modest in its capacity to produce chinook (as well as some coho and chum). Releases are typically less than 1 million and are usually smolts (sometimes fed fry). Current release goals are approximately 460,000 smolts. 
+The 4 Mile Creek Enhancement Society operates the 4 Mile Hatchery to enahnce San Juan chinook. The current board of directors is composed of the society members, hatchery managers, Pacheedaht and Mosaic representatives. The hatchery is modest in its capacity to produce chinook (as well as some coho and chum). Releases are typically less than 1 million and are usually smolts (sometimes fed fry). Current release goals are approximately 460,000 smolts. 
 
 Due to water shortage issues at the hatchery in warmer months, most juveniles are transferred to the Fairy Lakepen for the remainder of their holding time. Juveniles are then released from the Fairy Lake outlet (~200m from the San Juan River). A subset are CWT'd and held at the hatchery where low water can sustain a smaller group. These fish are held at the hatchery for a brief period of time before they are transferred to a seapen off Port Renfrew where they imprint in the marine environemnt. The goal of the seapen releases is to support a terminal fishery; juveniles that have imprinted on nearshore marine waters (rather than the lake or river) are (ideally) more likely to return to these waters as adults and stage here longer than adults with a high drive to return to natal freshwater. The holding/staging of fish in coastal waters provides a fishery opportunity for Pacheedaht members. 
+
+<br>
 
 #### Brood collection and release history
 
@@ -327,18 +387,21 @@ sj.rel.mrp.sum <- sj.releases.mrp %>%
   group_by(`Release Site Name`, `Brood Year`) %>% 
   summarize(`Total Released` = sum(`Total Released`), CWT_afc = sum(`Num WithCWT Adclip`), untag_afc=sum(`Num NoCWT Adclip`), 
             untag_unmark = sum(`Num NoCWT NoAdclip`)) %>%
-  mutate(propn_CWTafc = round(CWT_afc/`Total Released`,3)*100, 
-         propn_untagafc = round(untag_afc/`Total Released`,3)*100, 
-         propn_untagunmark = round(untag_unmark/`Total Released`,3)*100, 
-         propn_marked = round((CWT_afc+untag_afc)/`Total Released`,3)*100) %>%
+  mutate(propn_CWTafc = round(CWT_afc/`Total Released`,2)*100, 
+         propn_untagafc = round(untag_afc/`Total Released`,2)*100, 
+         propn_untagunmark = round(untag_unmark/`Total Released`,2)*100, 
+         propn_marked = round((CWT_afc+untag_afc)/`Total Released`,2)*100,
+         FACILITY_NAME = ifelse(`Release Site Name`=="Port Renfrew","Port Renfrew Seapen", "San Juan River H"),
+         source1="MRP") %>%
   arrange(`Brood Year`) %>%
-  rename(`CWT and AFC`=CWT_afc,
-         `AFC only`=untag_afc,
-         Unmarked=untag_unmark,
-         `% CWT and AFC`=propn_CWTafc,
-         `% AFC only`=propn_untagafc,
-         `% umarked`=propn_untagunmark,
-         `Total % marked`=propn_marked) %>% 
+  rename(BROOD_YEAR=`Brood Year`,
+         CWT_AD=CWT_afc,
+         AD_only=`untag_afc`,
+         unmarked=untag_unmark,
+         total_release=`Total Released`,
+         `CWT_AD %`=propn_CWTafc,
+         `AD_only %`=propn_untagafc,
+         `unmarked %`=propn_untagunmark) %>% 
   print()
 
 # SEP: 
@@ -347,13 +410,33 @@ sj.rel.sep.sum <- sj.releases.sep %>%
   group_by(BROOD_YEAR, FACILITY_NAME) %>%
   summarize(CWT_AD=sum(TaggedNum,na.rm=T), AD_only=sum(NoTagNum,na.rm=T), unmarked=sum(UnmarkedNum,na.rm=T), tags_lost=sum(ShedTagNum,na.rm=T), total_release=sum(TotalRelease,na.rm=T)) %>% 
   group_by(BROOD_YEAR) %>% 
-  mutate(`CWT_AD %`=round(CWT_AD/total_release*100,0), `AD_only %`=round(AD_only/total_release*100,0), `unmarked %`=round(unmarked/total_release*100,0)) %>%
+  mutate(AD_only = AD_only+tags_lost,
+         `CWT_AD %`=round(CWT_AD/total_release*100,0), 
+         `AD_only %`=round(AD_only/total_release*100,0), 
+         `unmarked %`=round(unmarked/total_release*100,0),
+         source2="SEP") %>%
+  select(-c(tags_lost)) %>% 
   print()
 
 write.csv(sj.rel.sep.sum, "~/ANALYSIS/data/SanJuan_SEPreleases_jul2022.csv", row.names=F)
 
 
-# Releases that were recovered -----------------------
+# JOIN:
+sj.rel.all <- full_join(sj.rel.mrp.sum, sj.rel.sep.sum) %>%
+  mutate(source = ifelse(!is.na(source1) & is.na(source2), source1,
+                         ifelse(is.na(source1) & !is.na(source2), source2,
+                              ifelse(!is.na(source1) & !is.na(source2), paste0(source1, sep=", ", source2), "FLAG"))),
+         `Release Site Name` = ifelse(is.na(`Release Site Name`) & FACILITY_NAME=="San Juan River H", "San Juan R",
+                                  ifelse(is.na(`Release Site Name`) & FACILITY_NAME=="Port Renfrew Seapen", "Port Renfrew",
+                                      ifelse(FACILITY_NAME=="Fairy Lakepen", "Fairy Lk", `Release Site Name`)))) %>%
+  select(FACILITY_NAME, `Release Site Name`, BROOD_YEAR, CWT_AD, AD_only, unmarked, total_release,
+         `CWT_AD %`, `AD_only %`, `unmarked %`, source)
+
+
+
+
+
+# MRP Releases that were recovered -----------------------
 # How many
 sj.rel.rcvy %>% 
   group_by(`(RL) Release Site Name`, `(RL) Brood Year`) %>% 
@@ -383,14 +466,16 @@ sj.rel.rcvy %>%
 
 ```
 
-<br>
+Fig 1/Fig 3 shows brood collections over time (as documented in NuSEDS). Hatchery releases from SEP are documented back to 1995, but note that MRP also contains San Juan CWT records dating back to BY 1979. From 2013-2017 all seapean releases were marked, but the seapen has not been used in recent years (although hopes to be used for BY 2022/RY 2023). The majority of San Juan chinook releases are unmarked. 
 
-The figure above shows brood collections over time (as documented in NuSEDS). Hatchery releases from SEP are documented back to 1995, but note that MRP contains San Juan CWT records dating back to BY 1979. From 2013-2017 all seapean releases were marked, but the seapen has not been used in recent years (although hopes to be used for BY 2023). The majority of San Juan chinook releases are unmarked. 
-
-*Table 2. Hatchery releases and marking information for San Juan and tributary Chinook. Data from MRP Extractor. It is assumed all broodstock was collected from the San Juan River, with different release strategy locations indicated by "Release Site Name" (Port Renfrew = juveniles reared in a sea netpen).*
+*Table 2. Hatchery releases and marking information for San Juan and tributary Chinook. Data from SEP. It is assumed all broodstock was collected from the San Juan River, with different release strategy locations indicated by "Release Site Name" (Port Renfrew = juveniles reared in a sea netpen).*
 ```{r echo=F, warning=F, message=F}
 # Just Releases ----------------------- 
-sj.rel.sep.sum %>%
+sj.rel.all %>%
+filter(!grepl("Harris", `Release Site Name`)) %>%
+  group_by(BROOD_YEAR, FACILITY_NAME) %>% 
+  summarize(CWT_AD=unique(CWT_AD), AD_only=sum(AD_only), unmarked=unique(unmarked), total_release=unique(total_release), `CWT_AD %` = unique(`CWT_AD %`),
+            `AD_only %`=unique(`AD_only %`), `unmarked %`=unique(`unmarked %`)) %>% 
   mutate(across(CWT_AD:total_release, ~ format(., big.mark=",", scientific=F))) %>%
   #select(FACILITY_NAME,BROOD_YEAR,CWT_AD:`unmarked %`)%>%
   kbl(align="c") %>%
@@ -402,25 +487,60 @@ sj.rel.sep.sum %>%
 
 ```{r message=F, warning=F, echo=F}
 ggplot() +
-  geom_bar(data=sj.rel.sep.sum, aes(x=as.numeric(BROOD_YEAR), y=total_release/200), stat="identity", fill="gray60", width=0.6, alpha=0.5) +
-  geom_line(data=sj.plot%>%filter(`Waterbody Name`=="SAN JUAN RIVER", Species=="Chinook"), 
-            aes(x=as.numeric(`Analysis Year`), y=as.numeric(n), group=CK_est, fill=CK_est, colour=CK_est), size=1, alpha=0.7) +
-  geom_point(data=sj.plot%>%filter(`Waterbody Name`=="SAN JUAN RIVER", Species=="Chinook"), 
-             aes(x=as.numeric(`Analysis Year`), y=as.numeric(n), group=CK_est, fill=CK_est, colour=CK_est), size=3, stroke=1.2, alpha=0.7) +
+  geom_bar(data=sj.rel.all, aes(x=as.numeric(BROOD_YEAR), y=total_release/200, fill=`Release Site Name`), stat="identity", alpha=0.3) +
+  geom_line(data=sj.plot%>%filter(`Waterbody Name`=="SAN JUAN RIVER", Species=="Chinook", CK_est%in%c("Broodstock removals","Natural spawners")), 
+            aes(x=as.numeric(`Analysis Year`), y=as.numeric(n), group=CK_est, colour=CK_est), size=1.2, alpha=0.7) +
+  #geom_point(data=sj.plot%>%filter(`Waterbody Name`=="SAN JUAN RIVER", Species=="Chinook"), 
+  #           aes(x=as.numeric(`Analysis Year`), y=as.numeric(n), group=CK_est, fill=CK_est, colour=CK_est), size=3, stroke=1.2, alpha=0.7) +
   scale_x_continuous(breaks=seq(min(sj.plot$`Analysis Year`), max(sj.plot$`Analysis Year`), by=3)) +
   scale_y_continuous(limits=c(0,8000), breaks=seq(0,8000,by=2000), sec.axis = sec_axis(~ . * 200, name = "Hatchery releases")) +
-  labs(x="Return Year", y="Number of Chinook", caption="Fig 3. Chinook hatchery releases (gray bars; Table 2) relative to escapement (Figure 1). Data from NuSEDS and \nSEP.") +
+  labs(x="Brood year (RY is +1)", y="Number of Chinook", caption="Fig 3. Chinook hatchery releases (bars; Table 2) relative to escapement and broodstock \ncollections (Figure 1). Release data from SEP and MRP, escapement data from NuSEDS.") +
   theme_bw() +
   theme(axis.text = element_text(colour="black", size=11),
         axis.text.x = element_text(angle=45, hjust=1),
         axis.title = element_text(face="bold", size=13),
         panel.grid = element_blank(),
         legend.title = element_blank(),
-        legend.position = c(0.8,0.9),
+        legend.position = c(0.15,0.7),
         legend.background = element_rect(colour="black", fill="transparent"),
         legend.key = element_rect(fill="transparent"),
         plot.caption = element_text(face="italic", hjust=0)) 
 ```
+
+<br>
+
+#### Size and timing at release 
+
+```{r echo=F, warning=F, message=F}
+sj.rel.bio <- sj.releases.sep %>% 
+  mutate(START_DATE = ifelse(nchar(START_DATE)==6, paste(START_DATE, 15, sep=""), START_DATE),
+         START_DATE = lubridate::ymd(START_DATE),
+         END_DATE = ifelse(nchar(END_DATE)==6, paste(END_DATE, 15, sep=""), END_DATE),
+         END_DATE = lubridate::ymd(END_DATE)) %>%
+  filter(SPECIES_NAME=="Chinook") %>% 
+  group_by(RELEASE_YEAR, RELEASE_STAGE_NAME) %>% 
+  summarize(start=START_DATE, weight=mean(AVE_WEIGHT)) %>% 
+  mutate(start_DOY = lubridate::yday(start)) %>%
+  print()
+```
+```{r}
+ggplot(sj.rel.bio, aes(x=as.Date(start_DOY, origin="1995-01-01"), y=RELEASE_STAGE_NAME, fill=RELEASE_STAGE_NAME, colour=RELEASE_STAGE_NAME, group=RELEASE_YEAR)) +
+  geom_point(shape=21, size=4, alpha=0.7) +
+  scale_x_date(date_labels="%B %d", date_breaks="7 days") +
+  labs(y="Release stage", x="Earliest release date") +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(colour="black", angle=45, hjust=1))
+```
+
+```{r}
+ggplot(sj.rel.bio, aes(x=RELEASE_YEAR, y=weight,  colour=RELEASE_STAGE_NAME, fill=RELEASE_STAGE_NAME)) +
+  geom_point(size=4) +
+  scale_x_continuous(breaks=seq(1995,2022,by=2)) +
+  theme_bw() +
+  theme()
+```
+
 
 <br>
 
@@ -458,13 +578,13 @@ ggplot(sj.otoTM.ref, aes(x=BROOD.YEAR, y=propn, colour=QUALITY, fill=QUALITY)) +
 
 Parental-based tagging (PBT) is relatively new for San Juan Chinook, beginning in 2017 but only reliable since 2019. From Eric Rondeau, MGL: 
 
-> We’ve received what I believe to be nearly-complete brood in 2018-2021. I would say it is reliable from 2019-2021, as 2018 was missing sex ID information which complicates the process. We received ~1/3 of the brood in 2017, so I would anticipate a limited ability to PBT there as well, but not enough to reliably utilize... I would suggest thought that 2019 is the first brood year I would recommend starting from, so for 2022 age 3. We could probably go back to 2018 (age 4 for 2022) too if we can identify the records on sex of the samples submitted, or we can possibly run genetic sex ID marker (but hatchery records are always preferred).
+> We’ve received what I believe to be nearly-complete brood in 2018-2021. I would say it is reliable from 2019-2021, as 2018 was missing sex ID information which complicates the process. We received ~1/3 of the brood in 2017, so I would anticipate a limited ability to PBT there as well, but not enough to reliably utilize... **I would suggest thought that 2019 is the first brood year I would recommend starting from, so for 2022 age 3.** We could probably go back to 2018 (age 4 for 2022) too if we can identify the records on sex of the samples submitted, or we can possibly run genetic sex ID marker (but hatchery records are always preferred).
 
 Note that he says it is possible to have GSI=100% certainty, and can't definitively be prescribed to PBT-alone. Regarding assumed PBT-origin chinook from 2015-2017 recreational catch: 
 
-> I think it is very unlikely that those are genuinely PBT assignments. I would suspect in this case the age was made by some other method, and that the GSI result was ~100% - it is possible the algorithm is interpreting any 100% assignment as a PBT, but this isn’t always the case (you can have a 100% GSI). If it wasn’t specifically marked PBT, but the GSI was 100%, I could see it being interpreted as a PBT but not actually a PBT. Do you have a few fish/Whatman/DNA IDs you could send as an example that I could verify though? We do have individuals in our baseline from San Juan from 2014 and 2015, but these are specifically marked “not brood” and no sexID was provided – these shouldn’t yield PBT IDs. 
+> **I think it is very unlikely that those are genuinely PBT assignments.** I would suspect in this case the age was made by some other method, and that the GSI result was ~100% - it is possible the algorithm is interpreting any 100% assignment as a PBT, but this isn’t always the case (you can have a 100% GSI). If it wasn’t specifically marked PBT, but the GSI was 100%, I could see it being interpreted as a PBT but not actually a PBT. Do you have a few fish/Whatman/DNA IDs you could send as an example that I could verify though? We do have individuals in our baseline from San Juan from 2014 and 2015, but these are specifically marked “not brood” and no sexID was provided – these shouldn’t yield PBT IDs. 
 
-> I would suspect in this case that all the “100s” you are looking at are from GSI. This seems slightly more common in the San Juan assignments than I’ve seen elsewhere, but they do pop up. Usually but not always tied to related individuals in the baseline (eg. a brother or uncle, etc.) where the genetic profile is very similar to something we have, thus making the assignment probability quite high. There are a few other reasons, but they start to get more technical, I would suspect relatedness to individuals from the 2014/2015 non-brood reference collections is most likely. I unfortunately don’t think you’ll be able to do the hatchery/natural in San Juan until roughly this year based on PBT alone, it will likely require an additional mark to complement the GSI. Moving ahead, we’ll be able to do so confidently (with ages), but with brood only going back to ~19, there will be limited resolution based solely on PBT until now. 
+> **I would suspect in this case that all the “100s” you are looking at are from GSI. This seems slightly more common in the San Juan assignments than I’ve seen elsewhere**, but they do pop up. Usually but not always tied to related individuals in the baseline (eg. a brother or uncle, etc.) where the genetic profile is very similar to something we have, thus making the assignment probability quite high. There are a few other reasons, but they start to get more technical, I would suspect relatedness to individuals from the 2014/2015 non-brood reference collections is most likely. **I unfortunately don’t think you’ll be able to do the hatchery/natural in San Juan until roughly this year based on PBT alone, it will likely require an additional mark to complement the GSI.** Moving ahead, we’ll be able to do so confidently (with ages), but with brood only going back to ~19, there will be limited resolution based solely on PBT until now. 
 
 <br>
 
@@ -601,12 +721,12 @@ sj.rec.biodat <- rec.biodat %>%
 
 
 # Export if needed ------------------------- 
-recbiodata <- createWorkbook()                    
-addWorksheet(recbiodata, "All biodata")
-addWorksheet(recbiodata, "SJ biodata") 
-writeData(recbiodata, "All biodata", rec.biodat) 
-writeData(recbiodata, "SJ biodata", sj.rec.biodat)
-saveWorkbook(recbiodata, "~/ANALYSIS/data/CREST_biodat_KD_Jul2022.xlsx", overwrite = TRUE) 
+#recbiodata <- createWorkbook()                    
+#addWorksheet(recbiodata, "All biodata")
+#addWorksheet(recbiodata, "SJ biodata") 
+#writeData(recbiodata, "All biodata", rec.biodat) 
+#writeData(recbiodata, "SJ biodata", sj.rec.biodat)
+#saveWorkbook(recbiodata, "~/ANALYSIS/data/CREST_biodat_KD_Jul2022.xlsx", overwrite = TRUE) 
 
 
 # Total source data types -------------------------
@@ -629,6 +749,7 @@ sj.rec.biodat %>%
   kbl(align="c") %>%
   kable_paper("hover", full_width=T, position = "center") %>%
   collapse_rows(columns=c(1), valign="middle")  
+
 ```
 
 ```{r echo=F, warning=F, message=F, include=F}
@@ -781,6 +902,30 @@ ggplot(data=sj.TMrcvy.AA%>%filter(SOURCE!="FSC - Escapement"), aes(x=SAMPLE.YR, 
 ```
 
 <br>
+
+##### MRP CWT recoveries
+
+```{r}
+sj.MRPrr.sum <- sj.rel.rcvy %>% 
+  group_by(`(RL) Tagcode`, `(RL) Num WithCWT Adclip`, `(RC) Recovery Year`, `(RC) Reporting Agency Code`, `(RC) Fishery PSC Code`, `(RC) MRP Area Name`, `(RC) Catch Region Name`, `(RC) PFMA SubArea Code`) %>%
+  summarize(released_cwtad = unique(`(RL) Num WithCWT Adclip`),
+            obsT = sum(`(RC) Observed Number`),
+            estT = sum(`(RC) Estimated Number`, na.rm=T),
+            expT = sum(`(RC) Expanded Number`)) %>% 
+  print()
+```
+
+```{r}
+ggplot(data=sj.MRPrr.sum %>% 
+         group_by(`(RC) Recovery Year`, `(RC) Reporting Agency Code`)%>% 
+         summarize(obsT = sum(obsT), estT=sum(estT), expT=sum(expT)) %>% 
+         pivot_longer(cols=c(obsT:expT), names_to="est_type", values_to="value") %>% 
+         filter(value>0)) +
+  geom_point(aes(x=`(RC) Recovery Year`, y=`(RC) Reporting Agency Code`, size=value, colour=est_type), shape=16, alpha=0.7) +
+  scale_size_continuous(range=c(2,9), breaks=seq(1,2500, by=500)) +
+  facet_wrap(~est_type, nrow=3)
+```
+
 
 ##### Recreational catch sample summary
 

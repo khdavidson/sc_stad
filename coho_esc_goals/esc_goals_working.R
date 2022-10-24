@@ -77,19 +77,7 @@ ggplot(data=smolt.pred, aes(x=length_km_cuml, y=smoltY)) +
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+## length must be km
 
 
 

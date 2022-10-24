@@ -1,0 +1,966 @@
+
+/*
+#Biodata_Creel!Creel
+#Biodata_Esc!Escapement
+#Biodata_FOS!FOS
+#Biodata_LOGS!OldLogbooks
+#Biodata_VTSL!VTSL
+#Biodata_OrphanRR!OrphanRR
+*/
+
+WITH 
+
+ rawdata AS
+ (SELECT cis.intno, cs.subarea, cst.chart, cst.site, cxy.location as target, catch.skey AS cskey
+ FROM creel_Tally Ct
+ LEFT JOIN creel_int ci ON ct.tkey = ci.tkey
+ LEFT JOIN creel_int_sub cis ON ci.intno = cis.intno
+ LEFT JOIN
+ (SELECT DISTINCT cis.skey FROM creel_tally ct
+ LEFT JOIN creel_int ci ON ct.tkey = ci.tkey
+ LEFT JOIN creel_int_sub cis ON ci.intno = cis.intno
+ LEFT JOIN creel_sub_catch csc ON cis.skey = csc.skey
+ LEFT JOIN CREEL_CREST_SML_AREA csa ON cis.sml_Area_id_id = csa.sml_area_id
+ LEFT JOIN creel_subarea cs ON csa.leg_id = cs.subarea_id
+ LEFT JOIN CREEL_CREST_LRG_AREA cla ON csa.lrg_area_id_id = cla.lrg_area_id
+ LEFT JOIN CREEL_CREST_PROGRAM ccp ON cla.program_id_id = ccp.program_id
+ WHERE TO_CHAR(ct.cdate, 'YYYY') IN (2020,2021) 
+ AND TO_CHAR(ct.cdate, 'MM') IN (12,11,10,9,8,7,6,5,4,3,2,1) 
+ AND ccp.program_id IN (1495, 1496, 1498, 1497, 1429, 1431, 27) 
+ AND csc.hart_Cd IS NOT NULL
+ ) catch ON cis.skey = catch.skey
+ LEFT JOIN CREEL_CREST_SML_AREA csa ON cis.sml_Area_id_id = csa.sml_area_id
+ LEFT JOIN creel_subarea cs ON csa.leg_id = cs.subarea_id
+ LEFT JOIN CREEL_CREST_LRG_AREA cla ON csa.lrg_area_id_id = cla.lrg_area_id
+ LEFT JOIN CREEL_CREST_PROGRAM ccp ON cla.program_id_id = ccp.program_id
+ LEFT JOIN creel_sub_target cst ON cis.skey = cst.skey and cst.hart_Cd = '124'
+ LEFT JOIN creel_chartsitexy cxy ON cst.chart = cxy.stat AND cst.site = cxy.site
+ LEFT JOIN creel_hart_Cd chc ON cst.hart_Cd = chc.hart_Cd
+ WHERE catch.skey IS NOT NULL AND TO_CHAR(ct.cdate, 'YYYY') IN (2020,2021) 
+ AND TO_CHAR(ct.cdate, 'MM') IN (12,11,10,9,8,7,6,5,4,3,2,1) 
+ AND ccp.program_id IN (1495, 1496, 1498, 1497, 1429, 1431, 27)
+ ORDER BY cis.intno, cs.subarea )
+ , rowdata1 AS
+ (SELECT intno, subarea, target, ROW_NUMBER () OVER (PARTITION BY intno, subarea ORDER BY intno,subarea) row# FROM rawdata) 
+ , rowdata AS
+ (SELECT * FROM rowdata1 WHERE row# = 1 ),
+ targetdata AS
+ (SELECT intno, subarea, SUBSTR (MAX (REPLACE (SYS_CONNECT_BY_PATH (TARGET, '!!'), '!!', ' & ' ) ), 3 ) LOCATION
+ FROM rowdata
+ START WITH row# = 1
+ CONNECT BY PRIOR intno = intno AND prior subarea = subarea AND PRIOR row# = row# - 1
+ GROUP BY intno, subarea ORDER BY intno, subarea )
+ , creel AS
+ (SELECT 0 AS base_id,
+ 0 AS fish_num,
+ ccp.project_nme AS Program,
+ cb.biokey AS BioKey,
+ NULL AS id2,
+ NULL AS Fish,
+ cast(TO_CHAR(ct.cdate, 'YYYY') as number) AS YEAR,
+ cm.MONTH_STR AS MONTH,
+ TO_CHAR(ct.cdate, 'DD-Mon-YY') AS CollectionDate,
+ ct.cdate - TRUNC(ct.cdate,'yyyy')+1 AS JulianDate,
+ 'Sport' AS SampleType,
+ cp.PROJECT_NME_SHRT AS Fishery,
+ cla.description AS Area,
+ csa.sml_Area_nme AS SubArea,
+ NVL(trim(td.location), 'None') AS FishingLocation,
+ cobs.NAME AS SamplerName,
+ 'Observer' AS SamplerType,
+ ct.interviewer AS SamplerID,
+ cls.land_site_txt AS LandingSite,
+ CASE WHEN ci.guided = 1 THEN 'Y' ELSE
+ CASE WHEN ci.guided = 0 THEN 'N' ELSE 'Unk' END END AS Guided,
+ cb.HART_CD AS Species,
+ cd.disposition_txt as disposition,
+ cfs.fsize_Desc AS Size_Cat,
+ CASE WHEN ad_clip.adclip_code = 1 THEN 'Y' ELSE
+ CASE WHEN ad_clip.adclip_code = 0 THEN 'N' ELSE COALESCE(ad_clip.adclip_txt, 'N/C') END END AS Adipose,
+ case when is_number(cb.length) = 0 then cast(cb.length as number) else null end AS Length_mm,
+ CASE WHEN cs.sex_txt = 'Female' THEN 'F' ELSE
+ CASE WHEN cs.sex_txt = 'Male' THEN 'M' ELSE cs.sex_txt END END AS Sex,
+ upper(cb.otolith_row) AS OtolithBox,
+ CASE WHEN is_number(cb.otolith_cell) = 0 THEN CAST(cb.otolith_Cell AS NUMBER) ELSE NULL END AS OtolithSpecimen,
+ CASE WHEN cb.lingcod_fin_num = '0' THEN null ELSE trim(cb.lingcod_fin_num) END AS REFERENCE,
+ CASE WHEN is_number(cb.S_BOOK) = 0 THEN CAST(cb.S_BOOK AS NUMBER) ELSE NULL END AS ScaleBook,
+ case when is_number(cb.S_NO) = 0 then cast(cb.S_NO as number) else null end AS Scale,
+ 'SPORT FISHERY' AS ScaleSource,
+ case when is_number(cb.head_tag) = 0 then cast(cb.head_tag as number) else null end AS CWTHeadLabel,
+ CASE WHEN is_number(cb.DNAVIAL) = 0 THEN CAST(cb.DNAVIAL AS NUMBER) ELSE NULL END AS SpecimenReferenceDNA,
+ cb.biocomment AS Comments
+ FROM creel_Tally ct
+ LEFT JOIN creel_int ci ON ct.tkey = ci.tkey
+ LEFT JOIN creel_bio cb ON ci.intno = cb.intno
+ LEFT JOIN creel_fsizes cfs on cb.fsize = cfs.fsize_cde
+ LEFT JOIN creel_months cm ON TO_CHAR(ct.cdate, 'MM') = cm.month
+ LEFT JOIN creel_subarea cs ON cb.subarea = cs.subarea
+ LEFT JOIN creel_Crest_sml_area csa ON cs.subarea_id = csa.leg_id
+ LEFT JOIN creel_Crest_lrg_Area cla ON csa.lrg_Area_id_id = cla.lrg_Area_id
+ LEFT JOIN creel_adclip ad_clip ON cb.ad_clip = ad_clip.adclip_code
+ LEFT JOIN creel_interviewer cobs ON ct.interviewer = cobs.interviewer
+ LEFT JOIN creel_land_site cls ON ct.land_site = cls.land_site
+ LEFT JOIN creel_Crest_program ccp ON cla.program_id_id = ccp.program_id
+ LEFT JOIN creel_projects cp ON ccp.PROJECT_ID_ID = cp.projects_id
+ LEFT JOIN creel_sex cs ON cb.sex = cs.SEX_CODE
+ LEFT JOIN targetdata td ON cb.subarea = td.subarea AND cb.intno = td.intno
+ left join creel_disposition cd on cd.id = 1
+ WHERE cb.biokey IS NOT NULL AND cb.hart_Cd IS NOT NULL 
+ AND TO_CHAR (ct.cdate, 'YYYY') IN (2020,2021) 
+ AND TO_CHAR (ct.cdate, 'MM') IN (12,11,10,9,8,7,6,5,4,3,2,1) 
+ AND ccp.program_id IN (1495, 1496, 1498, 1497, 1429, 1431, 27) ) 
+
+, bio AS
+ (SELECT NVL(e."Collection Date",to_Date("Year" || '-' || "JulianDate", 'YYYY-DDD')) AS cd, ra.area AS area1, ra.lrg_area_id_id,cm.month_Str,ccp.project_nme, e.*
+ FROM e_runrecon_biodata e
+ LEFT JOIN creel_river_area ra ON upper(e."Fishery_River") = upper(ra.river)
+ LEFT JOIN creel_months cm ON TO_CHAR(NVL(e."Collection Date",to_Date("Year" || '-' || "JulianDate", 'YYYY-DDD')), 'MM') = cm.month
+ LEFT JOIN creel_crest_lrg_Area cla ON ra.lrg_Area_id_id = cla.lrg_Area_id
+ LEFT JOIN creel_crest_program ccp ON cla.program_id_id = ccp.program_id
+ WHERE TO_CHAR (NVL(e."Collection Date",to_Date("Year" || '-' || "JulianDate", 'YYYY-DDD')), 'YYYY') IN (2020,2021) 
+ AND TO_CHAR (NVL(e."Collection Date",to_Date("Year" || '-' || "JulianDate", 'YYYY-DDD')), 'MM') IN (12,11,10,9,8,7,6,5,4,3,2,1) 
+ AND ccp.program_id IN (1495, 1496, 1498, 1497, 1429, 1431, 27)
+ ) 
+, escapement AS (
+ SELECT cast(b.esc_id as number) AS base_id ,
+ cast(b.esc_id as number) AS fish_num,
+ project_nme AS Program,
+ trim(b.esc_id) AS BioKey,
+ NULL AS id2,
+ NULL AS Fish,
+ cast(TO_CHAR(cd, 'YYYY') as number) AS YEAR,
+ MONTH_STR AS MONTH,
+ TO_CHAR(b.cd, 'DD-Mon-YY') AS CollectionDate,
+ TO_DATE (TO_CHAR (b.cd, 'YYYY-MON-DD'), 'YYYY-MON-DD') - TRUNC(b.cd,'YYYY') +1 AS JulianDate,
+ b."SampleType" AS SampleType,
+ b."Fishery_River" AS Fishery,
+ b."Area" AS Area,
+ b."SubArea" AS SubArea,
+ b."FishingLocation" AS FishingLocation,
+ b."SamplerName" AS SamplerName,
+ b."SamplerType" AS SamplerType,
+ case when is_number(b."GuideOrSamplerID") = 0 then cast(b."GuideOrSamplerID" as number) else null end AS SamplerID,
+ b."LandingSite" AS LandingSite,
+ b."Guided" AS Guided,
+ trim(b."Species") AS Species,
+ cd.disposition_txt as disposition,
+ NULL AS Size_Cat,
+ CASE WHEN b."Adipose fin clipped" = 'AD' THEN 'Y' ELSE
+ CASE WHEN upper(b."Adipose fin clipped") = 'Y' THEN 'Y' ELSE
+ CASE WHEN upper(b."Adipose fin clipped") = 'N' THEN 'N' ELSE
+ CASE WHEN b."Adipose fin clipped" = 'NOMK' THEN 'N' ELSE b."Adipose fin clipped" END END END END AS Adipose,
+ 
+ CASE WHEN IS_NUMBER( b."ForkLength") = 0 THEN cast(b."ForkLength" as number) ELSE NULL END AS Length_mm,
+ CASE WHEN b."Sex" = 'Female' THEN 'F' ELSE
+ CASE WHEN b."Sex" = 'Male' THEN 'M' ELSE b."Sex" END END AS Sex,
+ b."OtolithBoxNum" AS OtolithBox,
+ CASE WHEN is_number(b."OtolithSpecimenNum")= 0 THEN CAST(b."OtolithSpecimenNum" AS NUMBER) ELSE NULL END AS OtolithSpecimen,
+ null AS REFERENCE,
+ CASE WHEN IS_NUMBER(b."ScaleBookNum") = 0 THEN cast(b."ScaleBookNum" as number) ELSE NULL END AS ScaleBook,
+ CASE WHEN IS_NUMBER(b."ScaleNum") = 0 THEN cast(b."ScaleNum" as number) ELSE NULL END AS Scale,
+ b."ScaleSource" AS ScaleSource,
+ case when is_number(b."CWTHeadLabelNum") = 0 then cast(b."CWTHeadLabelNum" as number) else null end AS CWTHeadLabel,
+ CASE WHEN is_number(REPLACE(b."SpecimenReferenceDNANum",'DNA','') ) = 0 THEN CAST (REPLACE(b."SpecimenReferenceDNANum",'DNA','') AS number) ELSE NULL END AS SpecimenReferenceDNA,
+ b."Comments" AS Comments
+ FROM bio b
+ LEFT JOIN CREEL_DISPOSITION CD on CD.ID = 1
+ )
+
+, FOS AS
+ (SELECT fe.fe_id AS BASE_ID,
+ 0 AS FISH_NUM,
+ ccp.project_nme AS Program,
+ TO_CHAR(b.bio_Sample_id) AS BioKey,
+ NULL AS ID2,
+ NULL AS Fish,
+ cast(TO_CHAR(fe.fe_start_dtt, 'YYYY') as number) AS YEAR,
+ cm.MONTH_STR AS MONTH,
+ TO_CHAR(fe.FE_START_DTT, 'DD-Mon-YY') AS CollectionDate,
+ TRUNC(fe.FE_START_DTT - TRUNC(fe.FE_START_DTT,'YYYY') +1) AS JulianDate,
+ g.GEAR_NME AS SampleType,
+ '' AS Fishery,
+ cla.lrg_Area_nme AS Area,
+ fa.FA_NME AS SubArea,
+ null AS FishingLocation,
+ o.OBSVR_NME AS SamplerName,
+ cds.CDSRC_NME AS SamplerType,
+ o.OBSVR_ID AS SamplerID,
+ trim(l.lic_grp_nme || ' ' || vv.legal_nme) AS LandingSite,
+ '' AS Guided,
+ b.SPECIES_CDE AS Species,
+ cd.disposition_txt as disposition,
+ NULL AS Size_Cat,
+ CASE WHEN mid.CODE_DESC = 'adipose clipped' THEN 'Y' ELSE
+ CASE WHEN mid.code_Desc = 'adipose unclipped' THEN 'N' ELSE mid.code_Desc END END AS Adipose,
+ case when is_number(b.LENGTH) = 0 then cast(b.LENGTH as number) else null end AS Length_mm,
+ CASE WHEN SX.CODE_DESC = 'Female' THEN 'F' ELSE
+ CASE WHEN SX.CODE_DESC = 'Male' THEN 'M' ELSE
+ CASE WHEN SX.CODE_DESC = 'Unspec' THEN 'Unknown' ELSE SX.CODE_DESC END END END AS Sex,
+ b.OTOLITH_BOX_NO AS OtolithBox,
+ CASE WHEN is_number(b.OTOLITH_NO) = 0 THEN CAST(b.OTOLITH_NO AS NUMBER) ELSE NULL END AS OtolithSpecimen,
+ null AS REFERENCE,
+ CASE WHEN is_number(b.SCALE_BOOK_NO) = 0 THEN b.SCALE_BOOK_NO ELSE NULL END AS ScaleBook,
+ b.SCALE_NO AS Scale,
+ 'FOS' AS ScaleSource,
+ case when is_number(b.HEAD_TAG_NO) = 0 then cast(b.HEAD_TAG_NO as number) else null end AS CWTHeadLabel,
+ CASE WHEN is_number(b.GENETIC_NO) = 0 THEN CAST(b.GENETIC_NO AS NUMBER) ELSE NULL END AS SPECIMENREFERENCEDNA,
+ '' AS Comments
+ FROM FOS_V1_1.FISHING_EVENT fe
+ LEFT JOIN FOS_V1_1.GEAR_VW g ON fe.gear_gear_cde = g.GEAR_CDE
+ LEFT JOIN FOS_V1_1.CRPT_VW cr ON fe.CRPT_CRPT_ID = cr.CRPT_ID
+ LEFT JOIN FOS_V1_1.OBSERVER o ON cr.OBSVR_OBSVR_ID = o.OBSVR_ID
+ LEFT JOIN FOS_V1_1.CATCH_DATA_SOURCE cds ON cr.CDSRC_CDSRC_ID = cds.CDSRC_ID
+ LEFT JOIN FOS_V1_1.PERIOD pd ON cr.PD_PD_ID = pd.PD_ID
+ LEFT JOIN FOS_V1_1.OPNG_VW op ON pd.OPNG_OPNG_ID = op.OPNG_ID
+ LEFT JOIN FOS_V1_1.ACTIVITY a ON cr.ACT_ACT_ID = a.ACT_ID
+ LEFT JOIN FOS_V1_1.LICENCE l ON cr.LIC_LIC_ID = l.LIC_ID
+ LEFT JOIN FOS_V1_1.VESS_VW vv ON cr.VESS_SEQ_TEMP = vv.VESS_SEQ
+ LEFT JOIN fos_v1_1.FISHRY_AREA fa ON fe.fa_fa_id = fa.FA_ID
+ LEFT JOIN FOS_V1_1.FISHRY_AREA fa1 ON fa.fa_fa_id = fa1.FA_ID
+ LEFT JOIN creel_Crest_lrg_area cla ON trim(REPLACE(NVL(fa1.fa_nme,fa.FA_NME),'management area','Area')) = cla.lrg_area_nme
+ LEFT JOIN creel_Crest_program ccp ON cla.program_id_id = ccp.program_id
+ LEFT JOIN FOS_V1_1.BIO_SAMPLE b ON fe.fe_id = b.fe_id
+ LEFT JOIN FOS_V1_1.FOS_CODE l ON b.LENGTH_TYPE_ID = l.CODE_ID
+ LEFT JOIN FOS_V1_1.FOS_CODE sx ON b.SEX_ID = SX.CODE_ID
+ LEFT JOIN FOS_V1_1.FOS_CODE cwtd ON b.CWT_DETECTION_ID = cwtd.CODE_ID
+ LEFT JOIN FOS_V1_1.FOS_CODE dt ON b.GENETIC_TYPE_ID = dt.CODE_ID
+ LEFT JOIN FOS_V1_1.FOS_CODE mid ON b.MARK_ID = mid.CODE_ID
+ LEFT JOIN FOS_V1_1.FOS_CODE fc ON b.FLESH_COLOUR_ID = fc.CODE_ID
+ LEFT JOIN FOS_V1_1.FOS_CODE pm ON b.PHYSICAL_MARK_ID = pm.CODE_ID
+ LEFT JOIN FOS_V1_1.FOS_CODE msh ON b.MESH_ID = mSh.CODE_ID
+ LEFT JOIN FOS_V1_1.SPECIES_VW s ON b.SPECIES_CDE = s.SPECIES_CDE
+ LEFT JOIN FOS_V1_1.SCALEBOOK_FMT_VW sfv ON b.SCALEBOOK_FMT_ID = sfv.SCALEBOOK_FMT_ID
+ LEFT JOIN FOS_V1_1.SCALE_FORMAT_VW sf ON b.SCALE_FORMAT_ID = sf.SCALE_FORMAT_ID
+ LEFT JOIN creel_months cm ON TO_CHAR(fe.fe_Start_dtt, 'MM') = cm.month
+ LEFT JOIN CREEL_DISPOSITION CD on cd.id = 1
+ WHERE 1 = 1 
+ AND TO_CHAR (fe.fe_start_dtt, 'YYYY') IN (2020,2021) 
+ AND TO_CHAR (fe.fe_start_dtt, 'MM') IN (12,11,10,9,8,7,6,5,4,3,2,1) 
+ AND ccp.program_id IN (1495, 1496, 1498, 1497, 1429, 1431, 27) 
+ AND B.SPECIES_CDE IS NOT NULL 
+ ORDER BY fe.FE_START_DTT, fe.FE_END_DTT )
+
+, OldLogbooks AS
+ (SELECT clb.base_id,
+ lbi.fish_num,
+ ccp.project_nme AS Program,
+ trim(lbi.bio_id) AS BioKey,
+ CASE WHEN instr(lbi.bio_id, '1968') = 0 THEN NULL ELSE SUBSTR(lbi.bio_id, 1, LENGTH(lbi.bio_id) -4) -1968000000 END AS id2,
+ CASE WHEN instr(lbi.bio_id, '1968') = 0 THEN NULL ELSE CAST(SUBSTR(lbi.bio_id, -2) AS NUMBER) END AS Fish,
+ cast(TO_CHAR(clb.ldate, 'YYYY') as number) AS YEAR,
+ cm.MONTH_STR AS MONTH,
+ TO_CHAR(clb.ldate, 'DD-Mon-YY') AS CollectionDate,
+ clb.ldate - TRUNC(clb.ldate,'YYYY') +1 AS JulianDate,
+ 'Sport' AS SampleType,
+ cp.PROJECT_NME_SHRT AS Fishery,
+ cla.description AS Area,
+ csa.sml_Area_nme AS SubArea,
+ CASE WHEN instr(lbi.bio_id, '1968') = 0 THEN
+ CASE WHEN NVL(cll.location, 'XX') <> 'XX' THEN cll.location ELSE NVL(clrr.fishing_location, 'None') END ELSE vcll.location END AS FishingLocation,
+ trim(lo.OPERATOR_NAME) AS SamplerName,
+ CASE WHEN clb.record_type = 'Recon' THEN COALESCE(clrr.sampler_type, 'Guide') ELSE 'Fisher' END AS SamplerType,
+ lo.guide_id AS SamplerID,
+ CASE WHEN clb.record_type = 'Recon' THEN COALESCE(clrr.LANDING_SITE_SAMPLING_SITE,'Guide') ELSE 'Logbook' END AS LandingSite,
+ clb.Guided AS Guided,
+ lsp.HART_CD AS Species,
+ cd.disposition_txt as disposition,
+ cfs.fsize_Desc AS Size_cat, 
+ CASE WHEN clc.clipped_id = 1 THEN 'Y' ELSE
+ CASE WHEN clc.clipped_id = 2 THEN 'N' ELSE clc.clipped_txt END END AS Adipose,
+ CASE WHEN IS_NUMBER(lbi.length) = 0 THEN
+ CASE WHEN cli.length_txt = 'CM' THEN (lbi.length * 10) ELSE
+ CASE WHEN cli.length_txt = 'IN' THEN (lbi.length * 25.4) ELSE
+ CASE WHEN cli.length_txt = 'MM' THEN (lbi.length) ELSE NULL END END END ELSE NULL END AS Length_mm,
+ cls.sex_txt_alt AS Sex,
+ lbi.OTOLITH_ROW AS OtolithBox,
+ CASE WHEN is_number(lbi.OTOLITH_CELL) = 0 THEN CAST(lbi.OTOLITH_CELL AS NUMBER) ELSE NULL END AS OtolithSpecimen,
+ CASE WHEN lbi.fish_tag = '0' THEN null ELSE trim(lbi.fish_tag) END AS REFERENCE,
+ CASE WHEN is_number(lbi.SCALE_BOOK_NUM) = 0 THEN CAST(lbi.SCALE_BOOK_NUM AS NUMBER) END AS ScaleBook,
+ case when is_number(lbi.SCALE_NUM) = 0 then cast(lbi.SCALE_NUM as number) else null end AS Scale,
+ 'SPORT FISHERY' AS ScaleSource,
+ CASE WHEN lbi.head_tag LIKE 'OT%' THEN NULL ELSE case when is_number(lbi.head_tag) = 0 then cast(lbi.head_tag as number) else null end END AS CWTHeadLabel,
+ CASE WHEN lbi.DNA LIKE 'OT%' THEN NULL ELSE
+ CASE WHEN lbi.DNA IN ('0','-1') THEN NULL ELSE
+ CASE WHEN is_number(lbi.dna) = 0 THEN CAST(lbi.dna AS NUMBER) ELSE NULL END END END AS SpecimenReferenceDNA,
+ '' AS Comments
+ FROM creel_log_base clb
+ LEFT JOIN creel_months cm ON TO_CHAR(clb.ldate, 'MM') = cm.month
+ LEFT JOIN creel_log_bio lbi ON lbi.base_id = clb.base_id
+ LEFT JOIN creel_log_rr clrr ON lbi.base_id = clrr.base_id AND clrr.rn = lbi.FISH_NUM
+ LEFT JOIN creel_log_subarea ls ON clb.subarea_id = ls.subarea_id
+ LEFT JOIN creel_log_subarea ls2 ON clb.subarea2_id = ls2.subarea_id
+ LEFT JOIN creel_log_operators lo ON clb.operator_id = lo.operator_id
+ LEFT JOIN creel_log_vessels lv ON clb.vessel_id = lv.vessel_id
+ LEFT JOIN creel_log_species lsp ON lbi.spp_id = lsp.spp_id
+ LEFT JOIN creel_fsizes cfs on lsp.f_size = cfs.fsize_cde
+ LEFT JOIN creel_log_sex_id cls ON lbi.sex = cls.sex_id
+ LEFT JOIN creel_log_weight_id clw ON lbi.weight_units = clw.weight_id
+ LEFT JOIN creel_log_flesh_id clf ON lbi.flesh_colour = clf.flesh_id
+ LEFT JOIN creel_log_clipped_id clc ON lbi.clipped = clc.clipped_id
+ LEFT JOIN creel_log_length_id cli ON lbi.lngth_unit_id_id = cli.length_id
+ LEFT JOIN creel_log_locations cll ON clb.LOCATION_ID = cll.LOCATION_ID AND instr(lbi.bio_id, '1968') = 0
+ LEFT JOIN
+ (SELECT location AS location, csa.sml_Area_nme AS subarea,csa.sml_Area_id, cla.program_id_id AS program_id, id AS location_id, cls.subarea_id FROM creel_chartsitexy cxy
+ LEFT JOIN creel_Crest_sml_Area csa ON cxy.sml_Area_id_id_2011 = csa.sml_Area_id
+ LEFT JOIN creel_Crest_lrg_area cla ON csa.lrg_Area_id_id = cla.lrg_Area_id
+ LEFT JOIN creel_log_subarea cls ON csa.sml_Area_id = cls.sml_area_id_id
+ ) vcll ON clb.location_id = vcll.location_id AND instr(lbi.bio_id, '1968') = 1
+ LEFT JOIN creel_subarea cs1 ON ls.subarea = cs1.subarea
+ LEFT JOIN creel_crest_sml_area csa ON cs1.subarea_id = csa.leg_id
+ LEFT JOIN creel_Crest_lrg_Area cla ON csa.lrg_Area_id_id = cla.lrg_Area_id
+ LEFT JOIN creel_Crest_program ccp ON cla.program_id_id = ccp.program_id
+ LEFT JOIN creel_projects cp ON ccp.PROJECT_ID_ID = cp.projects_id
+ LEFT JOIN creel_disposition cd on lbi.disposition_id_id = cd.id
+ WHERE clb.license_number IS NULL 
+ AND lsp.HART_CD IS NOT NULL 
+ AND TO_CHAR (clb.ldate, 'YYYY') IN (2020,2021) 
+ AND TO_CHAR (clb.ldate, 'MM') IN (12,11,10,9,8,7,6,5,4,3,2,1) 
+ AND ccp.program_id IN (1495, 1496, 1498, 1497, 1429, 1431, 27)
+ )
+
+, ll as (select location as location, csa.sml_Area_nme as subarea, csa.sml_Area_id as sml_area_id_id, cla.description as pfma, cla.lrg_area_nme, cla.program_id_id as program_id, id as location_id, cls.subarea_id
+ from creel_chartsitexy cxy 
+ left join creel_Crest_sml_Area csa on cxy.sml_Area_id_id_2011 = csa.sml_Area_id
+ left join creel_Crest_lrg_area cla on csa.lrg_Area_id_id = cla.lrg_Area_id
+ left join creel_log_subarea cls on csa.sml_Area_id = cls.sml_area_id_id)
+
+, vtb as (select * from (
+select substr("DATE", 7,4) as yr,substr("DATE", 4,2) as mn, substr("DATE", 1,2) as dd, replace(l."DATE", '-','/') as "DATE", b.* from creel_vtsl2018b b left join creel_vtsl2018l l on b.pid = l.pid
+where nvl(l.deleted,0) <> -1
+and substr("DATE",1,2) in ('01','02','03','04','05','06','07','08','09','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30','31')
+and substr("DATE",4,2) IN ('01','02','03','04','05','06','07','08','09','10','11','12')
+and is_number(substr("DATE", 8,4)) = 0
+order by l.pid
+ ) where yr IN (2020,2021) 
+ AND mn IN (12,11,10,9,8,7,6,5,4,3,2,1) 
+)
+
+,d as (
+select pid, 1968000000 + pid as b_id, cast(trim(1968000000 + pid) || '0101' as number) as bio_id, 1 as Fish_num, FLU as FLU, WU as WU, 
+BSPP1 as BSPP, DIS1 as DIS, BL1 as BL, BS1 as BS, FL1 as FL, W1 as W, AC1 as AC, SEX1 as SEX, DNA1 as DNA, HL1 as HL, OTO1 as OTO, SB1 as SB, SN1 as SN, ft1 as ft, lastedit, updatedby, 0 as fc, b.cme || ' ' || b.cec || ' ' || b.cfc as comments
+from vtb b where bl1 not in (0,8888) 
+union
+select pid, 1968000000 + pid as b_id, cast(trim(1968000000 + pid) || '0202' as number) as bio_id, 2 as Fish_num, FLU as FLU, WU as WU, 
+BSPP2 as BSPP, DIS2 as DIS, BL2 as BL, BS2 as BS, FL2 as FL, W2 as W, AC2 as AC, SEX2 as SEX, DNA2 as DNA, HL2 as HL, OTO2 as OTO, SB2 as SB, SN2 as SN, ft2 as ft, lastedit, updatedby, 0 as fc, b.cme || ' ' || b.cec || ' ' || b.cfc as comments
+from vtb b where bl2 not in (0,8888)
+union
+select pid, 1968000000 + pid as b_id, cast(trim(1968000000 + pid) || '0303' as number) as bio_id, 3 as Fish_num, FLU as FLU, WU as WU, 
+BSPP3 as BSPP, DIS3 as DIS, BL3 as BL, BS3 as BS, FL3 as FL, W3 as W, AC3 as AC, SEX3 as SEX, DNA3 as DNA, HL3 as HL, OTO3 as OTO, SB3 as SB, SN3 as SN, ft3 as ft, lastedit, updatedby, 0 as fc, b.cme || ' ' || b.cec || ' ' || b.cfc as comments
+from vtb b where bl3 not in (0,8888)
+union
+select pid, 1968000000 + pid as b_id, cast(trim(1968000000 + pid) || '0404' as number) as bio_id, 4 as Fish_num, FLU as FLU, WU as WU, 
+BSPP4 as BSPP, DIS4 as DIS, BL4 as BL, BS4 as BS, FL4 as FL, W4 as W, AC4 as AC, SEX4 as SEX, DNA4 as DNA, HL4 as HL, OTO4 as OTO, SB4 as SB, SN4 as SN, ft4 as ft, lastedit, updatedby, 0 as fc, b.cme || ' ' || b.cec || ' ' || b.cfc as comments
+from vtb b where bl4 not in (0,8888)
+union
+select pid, 1968000000 + pid as b_id, cast(trim(1968000000 + pid) || '0505' as number) as bio_id, 5 as Fish_num, FLU as FLU, WU as WU, 
+BSPP5 as BSPP, DIS5 as DIS, BL5 as BL, BS5 as BS, FL5 as FL, W5 as W, AC5 as AC, SEX5 as SEX, DNA5 as DNA, HL5 as HL, OTO5 as OTO, SB5 as SB, SN5 as SN, ft5 as ft, lastedit, updatedby, 0 as fc, b.cme || ' ' || b.cec || ' ' || b.cfc as comments
+from vtb b where bl5 not in (0,8888)
+union
+select pid, 1968000000 + pid as b_id, cast(trim(1968000000 + pid) || '0606' as number) as bio_id, 6 as Fish_num, FLU as FLU, WU as WU, 
+BSPP6 as BSPP, DIS6 as DIS, BL6 as BL, BS6 as BS, FL6 as FL, W6 as W, AC6 as AC, SEX6 as SEX, DNA6 as DNA, HL6 as HL, OTO6 as OTO, SB6 as SB, SN6 as SN, ft6 as ft, lastedit, updatedby, 0 as fc, b.cme || ' ' || b.cec || ' ' || b.cfc as comments
+from vtb b where bl6 not in (0,8888)
+union
+select pid, 1968000000 + pid as b_id, cast(trim(1968000000 + pid) || '0707' as number) as bio_id, 7 as Fish_num, FLU as FLU, WU as WU, 
+BSPP7 as BSPP, DIS7 as DIS, BL7 as BL, BS7 as BS, FL7 as FL, W7 as W, AC7 as AC, SEX7 as SEX, DNA7 as DNA, HL7 as HL, OTO7 as OTO, SB7 as SB, SN7 as SN, ft7 as ft, lastedit, updatedby, 0 as fc, b.cme || ' ' || b.cec || ' ' || b.cfc as comments
+from vtb b where bl7 not in (0,8888)
+union
+select pid, 1968000000 + pid as b_id, cast(trim(1968000000 + pid) || '0808' as number) as bio_id, 8 as Fish_num, FLU as FLU, WU as WU, 
+BSPP8 as BSPP, DIS8 as DIS, BL8 as BL, BS8 as BS, FL8 as FL, W8 as W, AC8 as AC, SEX8 as SEX, DNA8 as DNA, HL8 as HL, OTO8 as OTO, SB8 as SB, SN8 as SN, ft8 as ft, lastedit, updatedby, 0 as fc, b.cme || ' ' || b.cec || ' ' || b.cfc as comments
+from vtb b where bl8 not in (0,8888)
+union
+select pid, 1968000000 + pid as b_id, cast(trim(1968000000 + pid) || '0909' as number) as bio_id, 9 as Fish_num, FLU as FLU, WU as WU, 
+BSPP9 as BSPP, DIS9 as DIS, BL9 as BL, BS9 as BS, FL9 as FL, W9 as W, AC9 as AC, SEX9 as SEX, DNA9 as DNA, HL9 as HL, OTO9 as OTO, SB9 as SB, SN9 as SN, ft9 as ft, lastedit, updatedby, 0 as fc, b.cme || ' ' || b.cec || ' ' || b.cfc as comments
+from vtb b where bl9 not in (0,8888)
+union
+select pid, 1968000000 + pid as b_id, cast(trim(1968000000 + pid) || '1010' as number) as bio_id, 10 as Fish_num, FLU as FLU, WU as WU, 
+BSPP10 as BSPP, DIS10 as DIS, BL10 as BL, BS10 as BS, FL10 as FL, W10 as W, AC10 as AC, SEX10 as SEX, DNA10 as DNA, HL10 as HL, OTO10 as OTO, SB10 as SB, SN10 as SN, ft10 as ft, lastedit, updatedby, 0 as fc, b.cme || ' ' || b.cec || ' ' || b.cfc as comments
+from vtb b where bl10 not in (0,8888)
+)
+, vtsl as (
+SELECT 
+ b_id AS base_id,
+ fish_num,
+ ccp.project_nme AS program,
+ trim(bio_id) AS biokey,
+ d.pid AS id2,
+ d.fish_num AS fish,
+ cast(TO_CHAR(to_date(l."DATE", 'DD/MM/YYYY'), 'YYYY') as number) AS YEAR,
+ cm.month_str AS MONTH,
+ TO_CHAR(to_date(l."DATE", 'DD/MM/YYYY'),'DD-Mon-YY') AS collectiondate,
+ to_date(l."DATE", 'DD/MM/YYYY') - TRUNC(to_date(l."DATE", 'DD/MM/YYYY'),'YYYY') +1 AS JulianDate,
+ 'Sport' AS sampletype,
+ cp.PROJECT_NME_SHRT as FISHERY, 
+ ll.PFMA as AREA,
+ ll.SubArea,
+ ll.location AS FISHINGLOCATION,
+ trim(lo.OPERATOR_NAME) AS SamplerName,
+ 'Guide' AS SAMPLERTYPE,
+ lo.guide_id AS SamplerID,
+ 'Logbook' AS LandingSite,
+ CASE WHEN l.guided = -1 THEN 'Y' ELSE 'N' END AS guided,
+ trim(lsp.HART_CD) AS Species,
+ cd.disposition_txt as disposition,
+ cfs.fsize_desc as size_cat,
+ CASE WHEN clc.clipped_id = 1 THEN 'Y' ELSE
+ CASE WHEN clc.clipped_id = 2 THEN 'N' ELSE clc.clipped_txt END END AS Adipose,
+ CASE WHEN IS_NUMBER(d.fl) = 0 THEN
+ CASE WHEN cli.length_txt = 'CM' THEN (d.fl * 10) ELSE
+ CASE WHEN cli.length_txt = 'IN' THEN (d.fl * 25.4) ELSE
+ CASE WHEN cli.length_txt = 'MM' THEN (d.fl) ELSE NULL END END END ELSE NULL END AS Length_mm,
+ cls.sex_txt_alt AS Sex,
+ CASE WHEN instr(d.oto, ' ') > 0 THEN trim(SUBSTR(d.oto,1, instr(d.oto, ' '))) ELSE NULL END AS otolithbox ,
+ CASE WHEN instr(d.oto, ' ') > 0 THEN case when is_number(trim(SUBSTR(d.oto, instr(d.oto, ' '), LENGTH(d.oto))))= 0 then cast(trim(SUBSTR(d.oto, instr(d.oto, ' '), LENGTH(d.oto))) as number) else null end ELSE NULL END AS otolithspecimen,
+ CASE WHEN NVL(ft,'0') <> '0' THEN trim(ft) ELSE
+ CASE WHEN instr(oto, ' ') > 0 THEN NULL ELSE oto END END AS REFERENCE,
+ CASE WHEN is_number(d.sb) <> 0 THEN NULL ELSE CASE WHEN d.sb = '0' THEN NULL ELSE cast (d.sb as number) END END AS SCALEBOOK,
+ case when is_number(sn) = 0 then cast(sn as number) else null end AS Scale,
+ 'SPORT FISHERY' AS ScaleSource ,
+ case when is_number(hl) = 0 then cast(hl as number) else null end AS CWTHEADLABEL,
+ CASE WHEN is_number(dna) = 0 THEN CAST(dna AS NUMBER) ELSE NULL end AS SPECIMENREFERENCEDNA,
+ case when length(d.oto)> 0 and instr(d.oto, ' ') = 0 then '** Invalid Otolith Entry** (' || d.oto ||') ' || d.comments else d.comments end AS comments
+FROM d
+LEFT JOIN CREEL_VTSL2018L l ON d.pid = l.pid
+LEFT JOIN creel_months cm ON TO_CHAR(to_date(l."DATE", 'DD/MM/YYYY'), 'MM') = cm.month
+LEFT JOIN ll ON d.bl = ll.location_id
+LEFT JOIN creel_log_operators lo ON l.operator_id = lo.operator_id
+LEFT JOIN creel_Crest_program ccp ON ll.program_id = ccp.program_id
+LEFT JOIN CREEL_PROJECTS cp ON ccp.project_id_id = cp.projects_id
+LEFT JOIN creel_log_species lsp ON d.bspp = lsp.spp_id
+left join creel_fsizes cfs on lsp.f_size = cfs.fsize_cde
+LEFT JOIN creel_log_sex_id cls ON d.sex = cls.sex_id
+LEFT JOIN creel_log_weight_id clw ON d.wu = clw.weight_id
+LEFT JOIN creel_log_flesh_id clf ON d.fc = clf.flesh_id
+LEFT JOIN creel_log_clipped_id clc ON d.ac = clc.clipped_id
+LEFT JOIN creel_log_length_id cli ON d.flu = cli.length_id
+LEFT JOIN CREEL_DISPOSITION CD on nvl(d.dis,1) = CD.ID
+where ccp.program_id IN (1495, 1496, 1498, 1497, 1429, 1431, 27)
+) 
+, orp1 as (
+select cos.*, cov.value_id, cov.specimen_no, coi.item_id, cov.value, nvl(coi.datatype, 'VARCHAR2') as datatype, coi.COLUMN_NAME, coi.TEXT
+from creel_orphan_source cosrc
+left join CREEL_ORPHAN_SAMPLE cos on cosrc.SOURCE_ID = cos.SOURCE_ID_ID
+left join CREEL_ORPHAN_VALUE cov on cos.sample_id = cov.SAMPLE_ID_ID
+left join creel_orphan_item coi on cov.item_id_id = coi.ITEM_ID
+where 1=1 
+and month <> 0
+and day between 1 and 31
+AND cos.year IN (2020,2021) 
+AND cos.month IN (12,11,10,9,8,7,6,5,4,3,2,1) 
+order by to_Date(nvl(cos.year , '1980') || '-' || nvl(cos.month,1) || '-' || nvl(cos.day,'01'), 'YYYY-MM-DD'), sample_id, specimen_no
+)
+
+, orp2 as (select orp1.sample_id, year, month, day, source_id_id, useability, sample_date, min(value_id) as value_id, specimen_no, column_name, item_id, listagg(value ,' ') within group (order by value_id) as value 
+from orp1 
+group by orp1.sample_id, year, month, day, source_id_id, useability, sample_date, specimen_no, column_name, item_id
+order by sample_id, specimen_no, item_id
+)
+
+, orp as (
+select * from ( 
+select sample_id as base_id, 'O' || sample_id || '-' || SPECIMEN_NO as biokey, to_Date(nvl(year, '1980') || '-' || nvl(month,'01') || '-' || nvl(day,'01'), 'YYYY-MM-DD') as collectiondate, year, month,
+column_name, value
+from orp2
+)pivot (min(VALUE) FOR column_name IN ( 
+'LENGTH_UNITS' as LENGTH_UNTIS, 'SEX_ID_ID' as SEX_ID_ID, 'MARKS_ID_ID' AS MARKS_ID_ID, 'HART_CD' as HART_CD, 'LRG_AREA_ID_ID' as LRG_AREA_ID_ID, 'SML_AREA_ID_ID' as SML_AREA_ID_ID, 
+'CHART' as CHART, 'SITE' as SITE, 'SAMPLING_PROGRAM' as SAMPLING_PROGRAM, 'DAY_OF_YEAR' as JULIANDATE, 'SAMPLE_TYPE' as SAMPLETYPE, 'FISHING_LOCATION' as FISHINGLOCATION
+, 'SAMPLER_NAME' as SAMPLERNAME , 'SAMPLER_TYPE' as SAMPLERTYPE, 'LANDING_SITESAMPLING_SITE' as LANDINGSITE, 'GUIDED' as GUIDED, 'FORK_LENGTH_MM' as LENGTH_MM, 'SCALE_BOOK_NO' as SCALEBOOK,
+'SCALE_NO' as SCALE, 'SPECIMEN_REFERENCE_DNA_NO' as SPECIMENREFERENCEDNA, 'GUIDE_OR_SAMPLER_ID' as SAMPLERID, 'OTOLITH_BOX_NO' as OTOLITHBOX, 'OTOLITH_SPECIMEN_NO' as OTOLITHSPECIMEN
+, 'DNA_CONTAINER_TYPE' as DNA_CONTAINER_TYPE, 'DISPOSITION_ID_ID' as DISPOSITION_ID_ID, 'REFERENCE_NO' as REFERENCE, 'CWT_HEAD_LABEL_NO' as CWTHEADLABEL, 'COMMENTS' as COMMENTS
+, 'RECEIVED_SCALES' as RECEIVED_SCALES, 'RECEIVED_DNA' as RECEIVED_DNA, 'RECEIVED_OTOLITH' as RECEIVED_OTOLITH
+, 'READ_SCALES' as READ_SCALES, 'READ_DNA' as READ_DNA, 'READ_OTOLITH' as READ_OTOLITH)
+))
+
+,orphanRR as (
+select 
+orp.base_id, row_number() over ( PARTITION by collectiondate, samplername order by collectiondate, samplername, scalebook, scale) as fish_num,
+ccp.project_nme as program, biokey, null as id2, null as fish, year, month_Str as month, TO_CHAR(collectiondate, 'DD-Mon-YY') AS CollectionDate,
+cast(case when is_number(JULIANDATE) = 1 then null else JULIANDATE end as number) as JULIANDATE, 
+sampletype, cp.PROJECT_NME_SHRT AS Fishery, cla.lrg_Area_nme as area, csa.sml_Area_nme as subarea, ll.location as fishinglocation, orp.samplername, orp.samplertype,
+cast(case when is_number(orp.samplerid) = 1 then null else orp.samplerid end as number) as SAMPLERID, orp.LANDINGSITE, orp.guided, orp.hart_Cd as species, 
+cd.disposition_txt as disposition, 'N/A' as size_cat, cmk.alt_text as adipose, 
+cast(case when is_number(orp.LENGTH_MM) = 1 then null else orp.LENGTH_MM end as number) as LENGTH_MM, 
+csx.sex_txt as sex, orp.otolithbox, 
+cast(case when is_number(orp.otolithspecimen) = 1 then null else orp.otolithspecimen end as number) as otolithspecimen,
+orp.reference, 
+cast(case when is_number(orp.SCALEBOOK) = 1 then null else orp.SCALEBOOK end as number) as SCALEBOOK, 
+cast(case when is_number(orp.SCALE) = 1 then null else orp.SCALE end as number) as SCALE, 
+'SPORT FISHERY' AS ScaleSource,
+cast(case when is_number(orp.CWTHEADLABEL) = 1 then null else orp.CWTHEADLABEL end as number) as CWTHEADLABEL,
+cast(case when is_number(orp.SPECIMENREFERENCEDNA) = 1 then null else orp.SPECIMENREFERENCEDNA end as number) as SPECIMENREFERENCEDNA,
+orp.comments
+from orp
+ left join creel_months cm on orp.month = cm.month
+ LEFT JOIN creel_crest_sml_area csa ON cast(orp.sml_AreA_id_id as number) = csa.sml_Area_id
+ LEFT JOIN creel_Crest_lrg_Area cla ON csa.lrg_Area_id_id = cla.lrg_Area_id
+ left join creel_fishing_sites ll on orp.chart = ll.chart and orp.site = ll.site and csa.sml_Area_id = ll.sml_area_id_id
+ LEFT JOIN creel_Crest_program ccp ON cla.program_id_id = ccp.program_id
+ LEFT JOIN creel_projects cp ON ccp.PROJECT_ID_ID = cp.projects_id
+ LEFT JOIN creel_disposition cd on nvl(orp.disposition_id_id,1) = cd.id
+ left join creel_marks cmk on cast(orp.MARKS_ID_ID as number) = cmk.marks_id
+ LEFT JOIN creel_sex csx ON orp.sex_id_id = csx.sex_code
+ WHERE 1=1 
+ AND SAMPLING_PROGRAM = 'Run Reconstruction'
+ AND orp.HART_CD IS NOT NULL 
+ AND ccp.program_id IN (1495, 1496, 1498, 1497, 1429, 1431, 27)
+)
+
+
+, final1 AS
+ (
+
+ select * from Creel
+
+ union Select * from Escapement
+
+ union Select * from FOS
+
+ union Select * from OldLogbooks
+
+ union Select * from VTSL
+
+ union Select * from OrphanRR
+
+
+)
+, final AS
+ (SELECT ta.terminalarea,
+ ts.terminal AS rra,
+ f.*
+ FROM final1 f
+ LEFT JOIN creel_terminal_Area ta ON f.area = ta.pfma
+ LEFT JOIN
+ (SELECT DISTINCT creelsub, terminal FROM creel_terminal_sub
+ ) ts ON f.SubArea = ts.creelsub
+ )
+, dna1 as (
+SELECT 2000 + to_number(REGEXP_REPLACE(REPLACE(REPLACE(area_year_gear, '(','Bb'), ')', 'Ee'), '.+Bb(.+)Ee.+', '\1', 1, 1, 'n')) AS yr,
+d.AREA_YEAR_GEAR,d.JULIAN_DATE,d.SPECIMEN_# as SPECIMEN, d.COMMENTS, case when upper(d.species) = 'CHINOOK' then '124' else case when upper(d.species) = 'COHO' then '115' else 'XXX' end end as hart_Cd,
+upper(d.STOCK_1) as STOCK_1, r1.resolved_stock_origin as region_1, r1.resolved_stock_rollup as rollup_1, d.PROB_1,
+upper(d.STOCK_2) as STOCK_2, r2.resolved_stock_origin as region_2, r2.resolved_stock_rollup as rollup_2, d.PROB_2,
+upper(d.STOCK_3) as STOCK_3, r3.resolved_stock_origin as region_3, r3.resolved_stock_rollup as rollup_3, d.PROB_3,
+upper(d.STOCK_3) as STOCK_4, r4.resolved_stock_origin as region_4, r4.resolved_stock_rollup as rollup_4, d.PROB_4,
+upper(d.STOCK_3) as STOCK_5, r5.resolved_stock_origin as region_5, r5.resolved_stock_rollup as rollup_5, d.PROB_5,
+d.SPECIES,d.DATASOURCE,d.ID, ' ' AS X
+ FROM v_creel_dna_results d
+ left join (select * from CREEL_STOCK where deprecated = 0 and source like '%DNA%') r1 on upper(trim(d.STOCK_1)) = upper(trim(r1.stock_cd))
+ left join (select * from CREEL_STOCK where deprecated = 0 and source like '%DNA%') r2 on upper(trim(d.STOCK_2)) = upper(trim(r2.stock_cd))
+ left join (select * from CREEL_STOCK where deprecated = 0 and source like '%DNA%') r3 on upper(trim(d.STOCK_3)) = upper(trim(r3.stock_cd))
+ left join (select * from CREEL_STOCK where deprecated = 0 and source like '%DNA%') r4 on upper(trim(d.STOCK_4)) = upper(trim(r4.stock_cd))
+ left join (select * from CREEL_STOCK where deprecated = 0 and source like '%DNA%') r5 on upper(trim(d.STOCK_5)) = upper(trim(r5.stock_cd))
+where 2000 + to_number(REGEXP_REPLACE(REPLACE(REPLACE(area_year_gear, '(','Bb'), ')', 'Ee'), '.+Bb(.+)Ee.+', '\1', 1, 1, 'n')) in (2020,2021))
+, dna as (select * from (select ROW_NUMBER () OVER (PARTITION BY yr, julian_date, specimen ORDER BY case when stock_1 = 'NO SAMPLE' then null else STOCK_1 end asc nulls last) row#, dna1.* 
+ from dna1) where row# = 1)
+,mrp as ( SELECT e.BROOD_YEAR,regexp_replace(e.RECOVERY_ID,'[^0-9]','') as RECOVERY_ID, e.recovery_year, 
+CASE WHEN e.tagcode2 in('No Tag', 'No Head', 'Lost Tag') THEN e.tagcode2 ELSE nvl(nvl(e.hatchery_site_name, e.release_site_name),'No Result -' || e.tagcode2) end as cwt_result, 
+CASE WHEN e.tagcode2 in('No Tag', 'No Head', 'Lost Tag') THEN e.tagcode2 ELSE nvl(nvl(e.hatchery_psc_region_name, e.release_site_name),'No Result -' || e.tagcode2) END AS CWT_Region 
+FROM v_creel_mrp_extract e WHERE recovery_year in (2020,2021) )
+ 
+,otoa as (select sample_num, substr('000' || container_label,-6) as container_label, substr('0' || SCALE_CONTAINER_ADDR,-2) as scale_container_addr, hart_Cd, sample_start_dt,
+ scale_format, age_gr, part_age_code 
+ from oto_v_age 
+ where to_Char(sample_Start_dt, 'YYYY') in (2020,2021)
+ and hart_Cd in ('124','115')
+ )
+
+, OTO as (select osp.*, otor.NPAFC_ID, otor.FACILITY,
+case when osp.SPECIMEN_ID is not null then nvl(oh.HATCH_CODE,nvl(otor.read_status, 'No Reading')) else null end AS ThermalMark,
+
+nvl(nvl(OS.ADFG_NAME,tml.stock), otor.FACILITY) AS OtoStock,
+
+case when OS.ADFG_NAME is not null then OS.ADFG_NAME else
+ case when tml.stock is not null then tml.stock else
+ case when otor.FACILITY is not null then otor.FACILITY else
+ case when osp.SPECIMEN_ID is not null then nvl(nvl(tml.stock,oh.HATCH_CODE),nvl(otor.read_status, 'No Reading')) else null end end end end as OtolithResolvedStock,
+ otor.read_status, oh.hatch_code
+from 
+(SELECT s.sample_yr, S.sample_id, chc.hart_Cd, S.lab_number, B.box_id, replace(B.box_code, 'RO','R0') as box_code, P.specimen_id, P.cell_number
+FROM oto_specimen P LEFT OUTER JOIN oto_box B ON P.box_id_id = B.box_id
+LEFT OUTER JOIN oto_sample S ON B.sample_id_id = S.sample_id
+left join OTO_SPECIES os on S.SPECIES_ID_ID = os.SPECIES_ID
+left join creel_hart_cd chc on os.name = chc.species_txt
+where sample_yr in (2020,2021)
+) osp
+LEFT JOIN oto_vw_recovery_spec otor ON osp.specimen_id = otor.specimen_id
+LEFT JOIN oto_mark om ON otor.mark_id = om.mark_id
+LEFT JOIN oto_hatch oh on om.hatch_id_id = oh.hatch_id
+LEFT JOIN oto_stock os ON om.stock_id_id = os.stock_id
+LEFT JOIN creel_tmLookup tml on oh.HATCH_CODE = tml.hatch_code and substr(otor.facility,1,8) = substr(tml.facility,1,8)
+where otor.read_number is not null
+)
+, cbc as (select nvl( nvl( nvl( nvl( nvl(biokey_id, trim(cbc.orp_id_id)) , bio_id_id) , fe_id_id) , esc_id_id), trim(1968000000 + cbc.pid_id) || substr('0' || cbc.vtslfish,-2) || substr('0' || cbc.vtslfish,-2)) as biokey,
+ id, esc_id_id, cbc.scale, cbc.tissue, cbc.oto, cbc.age, cbc.dna, cbc.read, cbc.lab_number, cbc.sample_num, cbc.oto_b, cbc.oto_c, cbc.dna_c
+from creel_bio_check cbc) 
+, collected AS
+ (SELECT COALESCE(cbc.scale, CASE WHEN Final.ScaleBook IS NULL THEN 'N/A' ELSE 'N/S' END) AS Received_Scales ,
+ COALESCE(cbc.tissue, CASE WHEN Final.SpecimenReferenceDNA IS NULL THEN 'N/A' ELSE 'N/S' END) AS Received_DNA ,
+ COALESCE(cbc.oto, CASE WHEN Final.OtolithSpecimen IS NULL THEN 'N/A' ELSE 'N/S' END) AS Received_Otolith ,
+ COALESCE(cbc.age, CASE WHEN Final.ScaleBook IS NULL THEN 'N/A' ELSE 'N/S' END) AS Read_Scales ,
+ COALESCE(cbc.dna, CASE WHEN Final.SpecimenReferenceDNA IS NULL THEN 'N/A' ELSE 'N/S' END) AS Read_DNA ,
+ COALESCE(cbc.read, CASE WHEN Final.OtolithSpecimen IS NULL THEN 'N/A' ELSE 'N/S' END) AS Read_Otolith ,
+ cbc.lab_number as OTOLITH_LAB_NUMBER,
+ cbc.sample_num as SCALE_SUBMISSION_NUMBER,
+ Final.Program,
+ Final.BioKey,
+ final.id2,
+ Final.Fish AS fish_no,
+ ta.TerminalArea AS Area_Name,
+ Final.Reference AS Reference_no,
+ CAST(Final.Year AS NUMBER) AS YEAR,
+ Final.Month AS MONTH,
+ to_Date (Final.CollectionDate, 'DD-Mon-YY') AS Collection_Date,
+ Final.JulianDate AS DayofYear ,
+ Final.SampleType AS Sample_Type ,
+ REGEXP_REPLACE(Final.area, '[^0-9]+', '') AS AREA,
+ Final.SubArea AS Subarea,
+ Final.FishingLocation AS Fishing_Location ,
+ Final.rra AS RUN_RECON_AREA, 
+ Final.SamplerName AS Sampler_Name ,
+ Final.SamplerType AS Sampler_Type ,
+ CAST(Final.SamplerID AS NUMBER) AS Sampler_ID ,
+ Final.LandingSite AS Landing_Site ,
+ Final.Guided AS Guided ,
+ Final.Species AS Species ,
+ Final.Disposition AS Disposition, 
+ final.Size_cat AS Size_cat, 
+ Final.Adipose AS Adipose_fin_clipped,
+ CASE WHEN Final.Length_mm = 0 THEN NULL ELSE CAST(Final.Length_mm AS NUMBER) END AS Length_mm ,
+ Final.Sex AS Sex,
+ 
+/* ------------------ Resolved Stuff start */
+
+
+ case when OTo.OtoStock is null and nvl(MRP.CWT_Region, 'No Tag') = 'No Tag' and nvl(DNA.STOCK_1, 'NO SAMPLE') = 'NO SAMPLE' and Final.Adipose = 'Y' then 'SUS (assumed)'
+ when ((nvl(MRP.CWT_Region, 'No Tag') not in ('No Tag', 'No Head', 'Lost Tag')) and (instr(mrp.cwt_region,'No Result -')=0)) then coalesce(r_c.Resolved_Stock_Origin, 'Not Found - ' || MRP.CWT_Region) 
+ when (dna.prob_1 = 1 and DNA.STOCK_1 <> 'NO SAMPLE') then trim(nvl(dna.region_1, dna.stock_1 || ' (Origin Not Found)'))
+ when OTo.OtoStock is not null then r_os.resolved_stock_origin 
+ when oto.FACILITY is not null then oto.FACILITY 
+ when (DNA.STOCK_1 is not null and DNA.STOCK_1 <> 'NO SAMPLE') then trim(nvl(dna.region_1, dna.stock_1 || ' (Origin Not Found)')) 
+ when oTo.SPECIMEN_ID is not null and oto.hatch_code is not null and oto.read_status <> 'No Reading' then 'Non-Canadian' 
+ else '' end AS Resolved_Stock_Origin,
+
+ case when OTo.OtoStock is null and nvl(MRP.CWT_Region, 'No Tag') = 'No Tag' and nvl(DNA.STOCK_1, 'NO SAMPLE') = 'NO SAMPLE' and Final.Adipose = 'Y' then 'SUS (assumed)'
+ when ((nvl(MRP.CWT_Region, 'No Tag') not in ('No Tag', 'No Head', 'Lost Tag')) and (instr(mrp.cwt_region,'No Result -')=0)) then r_c.resolved_stock_rollup
+ when (dna.prob_1 = 1 and DNA.STOCK_1 <> 'NO SAMPLE') then trim( DNAR.resolved_stock_rollup)
+ when OTO.OtoStock is not null then r_os.resolved_stock_rollup
+ when oto.FACILITY is not null then r_of.resolved_stock_rollup
+ when (DNA.STOCK_1 is not null and DNA.STOCK_1 <> 'NO SAMPLE') then trim(DNAR.resolved_stock_rollup)
+ when oTo.SPECIMEN_ID is not null and oto.hatch_code is not null and oto.read_status <> 'No Reading' then 'Non-Canadian' 
+ else '' end AS Resolved_Stock_Rollup,
+/*
+ case when ((nvl(MRP.CWT_Region, 'No Tag') not in ('No Tag', 'No Head', 'Lost Tag')) and (instr(mrp.cwt_region,'No Result -')=0)) then coalesce(r_c.Resolved_Stock_Origin, 'Not Found - ' || MRP.CWT_Region) else
+ case when (dna.prob_1 = 1 and DNA.STOCK_1 <> 'NO SAMPLE') then trim(DNA.STOCK_1) else 
+ case when OTo.OtoStock is not null then r_os.resolved_stock_origin else
+ case when oto.FACILITY is not null then oto.FACILITY else
+ case when (DNA.STOCK_1 is not null and DNA.STOCK_1 <> 'NO SAMPLE') then trim(DNA.STOCK_1) else 
+ case when oTo.SPECIMEN_ID is not null then 
+ case when oto.hatch_code is not null and oto.read_status <> 'No Reading' then 'Non-Canadian' 
+ else '' end end end end end end end AS Resolved_Stock_Origin,
+
+ case when ((nvl(MRP.CWT_Region, 'No Tag') not in ('No Tag', 'No Head', 'Lost Tag')) and (instr(mrp.cwt_region,'No Result -')=0)) then r_c.resolved_stock_rollup else
+ case when (dna.prob_1 = 1 and DNA.STOCK_1 <> 'NO SAMPLE') then trim(DNAR.resolved_stock_rollup) else 
+ case when OTO.OtoStock is not null then r_os.resolved_stock_rollup else 
+ case when oto.FACILITY is not null then r_of.resolved_stock_rollup else
+ case when (DNA.STOCK_1 is not null and DNA.STOCK_1 <> 'NO SAMPLE') then trim(DNAR.resolved_stock_rollup) else 
+ case when oTo.SPECIMEN_ID is not null then
+ case when oto.hatch_code is not null and oto.read_status <> 'No Reading' then 'Non-Canadian' 
+ else '' end end end end end end end AS Resolved_Stock_Rollup,
+*/
+ case when ((nvl(MRP.CWT_Region, 'No Tag') not in ('No Tag', 'No Head', 'Lost Tag')) and (instr(mrp.cwt_region,'No Result -')=0)) then 'CWT' else
+ case when (dna.prob_1 = 1 and DNA.STOCK_1 <> 'NO SAMPLE') then 'DNA' else
+ case when OTO.OtoStock is not null then 'Otolith Stock' else
+ case when oto.FACILITY is not null then 'Otolith Facility' else
+ case when (DNA.STOCK_1 is not null and DNA.STOCK_1 <> 'NO SAMPLE') then 'DNA' else '' end end end end end AS Resolved_Stock_Source,
+
+ case when Final.Adipose = 'Y' then 'Y' else
+ case when nvl(MRP.CWT_Region, 'No Tag') <> 'No Tag' then 'Y' else 
+ case when (oTo.SPECIMEN_ID is not null and oto.read_status not in ('Destroyed','No Sample','Not Marked','Unreadable')) then 'Y' else 
+ null end end end AS Hatchery_Origin,
+
+ case when coalesce(MRP.BROOD_YEAR,0) > 0 then Final.Year - MRP.BROOD_YEAR else car.resolved_age end as Resolved_Age, 
+/* ------------------ Resolved Stuff end */
+
+/* ------------------ Otolith Stuff start */
+ /*COALESCE(cbc.oto_b,*/ Final.OtolithBox /*)*/ AS Otolith_Box ,
+ /*COALESCE(
+ CASE WHEN is_number(NVL(cbc.oto_c,'X')) = 0 THEN CAST (cbc.oto_c AS NUMBER) ELSE NULL END ,*/ Final.OtolithSpecimen/*)*/ AS Otolith_Specimen ,
+ oto.FACILITY AS Facility,
+ case when oTo.SPECIMEN_ID is not null then nvl(oto.ThermalMark, nvl(oto.read_status, 'No Reading')) else null end AS ThermalMark,
+ OTO.OtoStock AS Oto_Stock,
+ case when OTO.OtoStock is not null then r_os.resolved_stock_origin else 
+ case when oto.FACILITY is not null then oto.FACILITY else
+ case when oTo.SPECIMEN_ID is not null then nvl(oto.ThermalMark, nvl(oto.read_status, 'No Reading')) else null end end end as Otolith_Resolved_RESULT,
+/* ------------------ Otolith Stuff End */
+
+/* ------------------ Age Stuff Start*/
+ CASE WHEN Final.ScaleBook = 0 THEN NULL ELSE Final.ScaleBook END AS Scale_Book,
+ CASE WHEN trim(Final.Scale ) = '0' THEN NULL ELSE CAST(Final.Scale AS NUMBER) END AS Scale_no,
+ Final.ScaleSource AS Scale_Source,
+ otoa.scale_format AS Scale_Format,
+ otoa.AGE_GR AS AGE_GR,
+ otoa.PART_AGE_CODE AS PART_AGE_CODE,
+/* ------------------ Age Stuff End*/ 
+
+/* ------------------ MRP Stuff Start*/ 
+ Final.CWTHeadLabel AS CWT_Head_Label,
+ MRP.CWT_Result AS CWT_Result,
+ MRP.CWT_Region AS CWT_Region,
+ MRP.BROOD_YEAR AS CWT_Brood_Year,
+/* ------------------ MRP Stuff End*/ 
+ 
+/* ------------------ DNA Stuff Start*/ 
+ case when Final.SpecimenReferenceDNA > 0 then nvl(cbc.dna_c, 'Whatman') else null end AS DNA_Container_Type,
+ case when Final.SpecimenReferenceDNA > 0 then Final.SpecimenReferenceDNA else null end AS Specimen_Reference_DNA_no,
+ DNAR.resolved_stock_rollup AS RESOLVED_STOCK_REGION,
+ coalesce(DNA.STOCK_1, DNA.COMMENTS ) AS DNA_Results_Stock_1,
+ DNA.region_1 AS Region_1_Name,
+ DNA.rollup_1 AS Region_1_Rollup ,
+ DNA.PROB_1 AS Prob_1 ,
+
+ DNA.stock_2 AS DNA_STOCK_2, 
+ DNA.region_2 AS Region_2_Name,
+ DNA.rollup_2 AS Region_2_Rollup ,
+ DNA.PROB_2 AS Prob_2 ,
+
+ DNA.stock_3 AS DNA_STOCK_3, 
+ DNA.region_3 AS Region_3_Name,
+ DNA.rollup_3 AS Region_3_Rollup,
+ DNA.PROB_3 AS Prob_3,
+
+ DNA.stock_4 AS DNA_STOCK_4, 
+ DNA.region_4 AS Region_4_Name,
+ DNA.rollup_4 AS Region_4_Rollup ,
+ DNA.PROB_4 AS Prob_4,
+
+ DNA.stock_5 AS DNA_STOCK_5, 
+ DNA.region_5 AS Region_5_Name,
+ DNA.rollup_5 AS Region_5_Rollup ,
+ DNA.PROB_5 AS Prob_5,
+
+/* ------------------ DNA Stuff End*/ 
+
+ RR. PHOTO_NO AS Photo_no,
+ COALESCE(Final. Comments , RR. COMMENTS ) AS Comments
+ FROM (select * from final where Species = '124') final
+ LEFT JOIN creel_hart_cd chc ON final.Species = chc.hart_Cd
+ LEFT JOIN creel_log_rr rr ON final.base_id = rr.base_id AND rr.rn = final.FISH_NUM
+ LEFT JOIN creel_terminal_area ta ON final.area = ta.PFMA
+ LEFT JOIN cbc ON final.biokey = cbc.biokey
+
+ LEFT JOIN OTO oto on cbc.lab_number = oto.lab_number 
+ and Final.OtolithBox = oto.BOX_CODE 
+ and Final.OtolithSpecimen = to_char(oto.CELL_NUMBER)
+
+ LEFT JOIN otoa ON substr('000' || final.ScaleBook,-6) = otoa.container_label
+ AND substr('0' || final.Scale,-2) = otoa.SCALE_CONTAINER_ADDR
+ and otoa.SAMPLE_NUM = cbc.sample_num
+ and otoa.hart_Cd = final.species
+ left join creel_age_resolved car on otoa.age_gr = car.age_gr
+
+left join mrp ON regexp_replace(final.CWTHeadLabel,'[^0-9]','') = mrp.RECOVERY_ID
+and to_char(to_date(final.CollectionDate, 'DD-Mon-YY'),'YYYY') =mrp.recovery_year
+
+left join dna ON CAST(final.JulianDate AS NUMBER) = dna.JULIAN_DATE and dna.yr = final.Year AND REGEXP_REPLACE(final.SpecimenReferenceDNA, '[^0-9]+', '') = dna.SPECIMEN and final.Species = dna.hart_Cd
+left join (select * from creel_stock where deprecated = 0 and source like '%DNA%') r_d on trim(upper(coalesce(dna.stock_1, dna.comments))) = trim(upper(r_d.stock_cd))
+left join (select * from creel_stock where deprecated = 0 and source like 'CWT%') r_c on trim(MRP.CWT_Result) = trim(r_c.stock_cd)
+left join (select * from creel_stock where deprecated = 0 and source like 'Otolith%') r_os on trim(OTO.OtoStock) = trim(r_os.stock_cd)
+left join (select * from creel_stock where deprecated = 0 and source like 'Otolith%') r_of on trim(oto.FACILITY) = trim(r_of.stock_cd)
+left join V_CREEL_DNA_RESULTS_REGION dnaR ON dnar.rn = 1 and CAST(final.JulianDate AS NUMBER) = dnar.JULIAN_DATE and dnar.yr = final.Year AND REGEXP_REPLACE(final.SpecimenReferenceDNA, '[^0-9]+', '') = dnar.SPECIMEN_# and final.Species = dnaR.hart_Cd
+ )
+
+, labels as (select ct.cdate, cb.head_tag, 'C' as source from creel_tally ct
+left join creel_int ci on ct.tkey = ci.tkey
+left join creel_int_sub cis on ci.intno = cis.intno
+left join creel_bio cb on ci.intno = cb.intno
+LEFT JOIN CREEL_CREST_SML_AREA csa ON cis.sml_Area_id_id = csa.sml_area_id
+LEFT JOIN CREEL_CREST_LRG_AREA cla ON csa.lrg_area_id_id = cla.lrg_area_id
+LEFT JOIN CREEL_CREST_PROGRAM ccp ON cla.program_id_id = ccp.program_id
+where cb.head_tag is not null and to_char(ct.cdate, 'YYYY') in (2020,2021) and to_char(ct.cdate, 'MM') in (12,11,10,9,8,7,6,5,4,3,2,1) AND ccp.program_id IN (1495, 1496, 1498, 1497, 1429, 1431, 27) 
+union all
+select cb.ldate as cdate, cbio.head_tag, 'L' as source from v_creel_log_base cb
+left join v_creel_log_bio cbio on cb.base_id = cbio.base_id
+left join creel_log_subarea cls on cb.subarea_id = cls.subarea_id
+LEFT JOIN CREEL_CREST_SML_AREA csa ON cls.sml_Area_id_id = csa.sml_area_id
+LEFT JOIN CREEL_CREST_LRG_AREA cla ON csa.lrg_area_id_id = cla.lrg_area_id
+LEFT JOIN CREEL_CREST_PROGRAM ccp ON cla.program_id_id = ccp.program_id
+where cbio.head_tag is not null and cbio.head_tag not in ('0') and to_char(cb.ldate, 'YYYY') in (2020,2021) and to_char(cb.ldate, 'MM') in (12,11,10,9,8,7,6,5,4,3,2,1) AND ccp.program_id IN (1495, 1496, 1498, 1497, 1429, 1431, 27) 
+)
+, shrp1 as (
+select 
+'N/A' as RECEIVED_SCALES, 'N/A' as RECEIVED_DNA, 'N/A' as RECEIVED_OTOLITH, 'N/A' as Read_Scales, 'N/A' as Read_DNA, 'N/A' as Read_Otolith,
+null AS OTOLITH_LAB_NUMBER,
+null As SCALE_SUBMISSION_NUMBER,
+case when ccp.project_nme is not null then ccp.project_nme else
+ case when ccp2.project_nme is not null then ccp2.project_nme else
+ case when ccp3.project_nme is not null then ccp3.project_nme else
+ case when ccp4.project_nme is not null then ccp4.project_nme else null end end end end as Program,
+'MRP-' || m.rc_record_id as BioKey,
+null as ID2, null as fish_no,
+ta.terminalarea AS AREA_NAME,
+null as Reference_no,
+m.RC_DATE_RECOVERY_YEAR as Year,
+cm.month_str as Month,
+to_date(case when length(m.RC_DATE_RECOVERY) = 7 then m.RC_DATE_RECOVERY || '/01' else m.RC_DATE_RECOVERY end, 'YYYY/MM/DD') as Collection_Date,
+to_date(case when length(m.RC_DATE_RECOVERY) = 7 then m.RC_DATE_RECOVERY || '/01' else m.RC_DATE_RECOVERY end, 'YYYY/MM/DD') 
+- TRUNC(to_date(case when length(m.RC_DATE_RECOVERY) = 7 then m.RC_DATE_RECOVERY || '/01' else m.RC_DATE_RECOVERY end, 'YYYY/MM/DD'),'yyyy')+1 
+ AS DAYOFYEAR,
+f.fishery_name as Sample_Type,
+/*case when cp.PROJECT_NME_SHRT is not null then cp.PROJECT_NME_SHRT else
+ case when cp2.PROJECT_NME_SHRT is not null then cp2.PROJECT_NME_SHRT else
+ case when cp3.PROJECT_NME_SHRT is not null then cp3.PROJECT_NME_SHRT else
+ case when cp4.PROJECT_NME_SHRT is not null then cp4.PROJECT_NME_SHRT else null end end end end as FISHERY_RIVER,*/
+regexp_replace(
+case when cla.description is not null then cla.description else
+ case when cla2.description is not null then cla2.description else
+ case when cla3.description is not null then cla3.description else
+ case when cla4.description is not null then cla4.description else null end end end end,'[^0-9]','') as AREA,
+
+
+NVL(FIND_CREELarea(s.long_degrees,s.lat_degrees,100),s.sub_area_pfma_code) as subarea,
+Find_CreelSiteName(s.long_degrees,s.lat_degrees) as Fishing_Location,
+
+case when ts.terminal is null then tsx.terminalarea else ts.terminal end as run_recon_area,
+'SHRP' as Sampler_Name,
+m.rc_sample_method_name AS Sampler_Type,
+null AS Sampler_ID,
+s.site_sport_name AS Landing_Site,
+null as Guided,
+trim(m.rc_species_mrp_code) as Species,
+'Kept' as DISPOSITION,
+'N/A' as SIZE_CAT,
+m.RC_SAMPLE_MARK_CODE AS Adipose_fin_clipped,
+m.rc_size_length AS Length_mm,
+m.rc_sex_code AS Sex,
+
+/* ------------------ Resolved Stuff start */
+CASE WHEN rl.rl_tagcode in( 'No Tag','Lost Tag') THEN 'No Tag' ELSE coalesce(r_c.resolved_stock_origin,HATCHERY_REGION.PSC_REGION_NAME) END AS Resolved_Stock_Origin,
+r_c.resolved_stock_rollup AS Resolved_Stock_Rollup,
+'CWT' AS Resolved_Stock_Source, 
+null AS Hatchery_Origin, 
+m.rc_age_total as Resolved_Age, 
+/* ------------------ Resolved Stuff end */
+
+/* ------------------ Otolith Stuff start */
+null AS Otolith_Box,
+null AS Otolith_Specimen,
+null AS Facility,
+null AS ThermalMark,
+null AS Oto_Stock,
+null as OTOLITH_RESOLVED_RESULT,
+/* ------------------ Otolith Stuff end */
+
+/* ------------------ Age Stuff Start*/
+m.rc_scale_book AS Scale_Book,
+m.rc_scale_number AS Scale_no,
+'SPORT FISHERY' as Scale_Source,
+null AS Scale_Format,
+null AS AGE_GR,
+null AS PART_AGE_CODE,
+/* ------------------ Age Stuff End*/
+
+/* ------------------ MRP Stuff Start*/ 
+case when is_number(m.RC_SOURCE_RECOVERY_ID) = 0 then cast(m.RC_SOURCE_RECOVERY_ID as number) else null end AS CWT_Head_Label,
+CASE WHEN nvl(rl.rl_tagcode, 'No Tag') = 'No Tag' THEN 'No Tag' ELSE nvl(rl.RL_SITE_HATCHERY_NAME, rl.rl_site_stock_name) end as cwt_result, 
+CASE WHEN nvl(rl.rl_tagcode, 'No Tag') in ('No Tag','Lost Tag') THEN 'No Tag' ELSE nvl(HATCHERY_REGION.PSC_REGION_NAME, rl.rl_agency_reporting_code) END AS CWT_Region,
+/*
+CASE WHEN nvl(rl.rl_tagcode, 'No Tag') = 'No Tag' THEN 'No Tag' ELSE rl.RL_SITE_HATCHERY_NAME end as cwt_result, 
+CASE WHEN nvl(rl.rl_tagcode, 'No Tag') in ('No Tag','Lost Tag') THEN 'No Tag' ELSE HATCHERY_REGION.PSC_REGION_NAME END AS CWT_Region,
+*/
+m.RC_DATE_BROOD_YEAR AS CWT_Brood_Year,
+/* ------------------ MRP Stuff End*/ 
+
+/* ------------------ DNA Stuff Start*/ 
+null AS DNA_Container_Type,
+null AS Specimen_Reference_DNA_NO,
+null as RESOLVED_STOCK_REGION,
+null as DNA_RESULTS_STOCK_1,
+
+null AS Region_1_Name,
+null AS Region_1_Rollup,
+null AS Prob_1,
+
+null AS DNA_Stock_2,
+null AS Region_2_Name,
+null AS Region_2_Rollup,
+null AS Prob_2,
+
+null AS DNA_Stock_3,
+null AS Region_3_Name,
+null AS Region_3_Rollup,
+null AS Prob_3,
+
+null AS DNA_Stock_4,
+null AS Region_4_Name,
+null AS Region_4_Rollup,
+null AS Prob_4,
+
+null AS DNA_Stock_5,
+null AS Region_5_Name,
+null AS Region_5_Rollup,
+null AS Prob_5,
+
+/* ------------------ DNA Stuff End*/ 
+
+null AS Photo_no,
+RL.RL_COMMENTS AS Comments
+
+from 
+ MRP_PUB.VW_RECOVERIES m
+left join MRP_PUB.mrp_fishery_mv f on m.rc_fishery_code = f.fishery_code
+left join MRP_PUB.mrp_area_mv a on m.RC_STAT_AREA_MRP_CODE = a.area_label
+left join MRP_PUB.MRP_BS_LOCATIONS_TBL l on m.rc_location_recovery_code = l.lc_code AND l.LC_TYPE_ID = 3
+left join MRP_PUB.MRP_sport_site_mv s on m.RC_SITE_SPORT_CODE = s.site_Sport_code
+left join refdata.geographic_features r on s.sub_area_pfma_code = r.abbreviation
+left join refdata.geographic_features rp on r.parent_gfea_id = rp.gfea_id
+left join (select description, min (program_id_id) as program_id_id from creel_Crest_lrg_Area where deprecated = 0 group by description) cla on rp.display_name = cla.description
+left join (select description, min (program_id_id) as program_id_id from creel_Crest_lrg_Area where deprecated = 0 group by description) cla2 on trim(a.pfma_id) = replace(cla2.description,'PFMA ','') 
+left join (select description, min (MRP_CODE_ID_ID) as MRP_CODE_ID_ID, min (program_id_id) as program_id_id from creel_Crest_lrg_Area where deprecated = 0 group by description) cla3 on area_mrp_code = cla3.MRP_CODE_ID_ID
+left join (select description, min (MRP_CODE_ID_ID) as MRP_CODE_ID_ID, min (program_id_id) as program_id_id from creel_Crest_lrg_Area where deprecated = 0 group by description) cla4 on rc_stat_area_mrp_code = cla4.MRP_CODE_ID_ID
+left join creel_crest_program ccp on cla.program_id_id = ccp.program_id
+left join creel_crest_program ccp2 on cla2.program_id_id = ccp2.program_id
+left join creel_crest_program ccp3 on cla3.program_id_id = ccp3.program_id
+left join creel_crest_program ccp4 on cla4.program_id_id = ccp4.program_id
+LEFT JOIN creel_projects cp ON ccp.PROJECT_ID_ID = cp.projects_id
+LEFT JOIN creel_projects cp2 ON ccp2.PROJECT_ID_ID = cp2.projects_id
+LEFT JOIN creel_projects cp3 ON ccp3.PROJECT_ID_ID = cp3.projects_id
+LEFT JOIN creel_projects cp4 ON ccp4.PROJECT_ID_ID = cp4.projects_id
+left join creel_terminal_area ta on CASE WHEN cla.description IS NOT NULL THEN cla.description ELSE 
+ CASE WHEN cla2.description IS NOT NULL THEN cla2.description ELSE 
+ CASE WHEN cla3.description IS NOT NULL THEN cla3.description ELSE
+ CASE WHEN cla4.description IS NOT NULL THEN cla4.description ELSE NULL END END END END = ta.pfma
+LEFT JOIN mrp_pub.mrp_bs_releases_tbl rl ON m.RC_TAGCODE = RL.RL_TAGCODE AND RL.RL_RELEASE_TYPE_CODE = 'C'
+LEFT JOIN mrp_pub.mrp_bs_locations_tbl hatchery_loc ON RL.RL_SITE_HATCHERY_PSC_STRIP = HATCHERY_LOC.LC_CODE AND HATCHERY_LOC.LC_TYPE_ID = 3
+LEFT JOIN mrp_pub.mrp_psc_region_mv hatchery_region ON HATCHERY_LOC.LC_PSC_REGION = HATCHERY_REGION.PSC_REGION_CODE
+left join (select * from creel_stock where deprecated = 0 and source like 'CWT%') r_c on CASE WHEN rl.rl_tagcode = 'No Tag' THEN 'No Tag' ELSE trim(rl.RL_SITE_HATCHERY_NAME) END = trim(r_c.stock_cd)
+left join CREEL_MONTHS cm on m.RC_DATE_RECOVERY_MM = cm.month
+left join creel_terminal_sub ts on s.sub_area_pfma_code = ts.creelsub
+left join creel_terminal_area tsx on 
+case when cla.description is not null then cla.description else
+ case when cla2.description is not null then cla2.description else
+ case when cla3.description is not null then cla3.description else
+ case when cla4.description is not null then cla4.description else null end end end end = tsx.pfma
+where
+ m.RC_DATE_RUN_YEAR in (2020,2021) and
+ m.RC_DATE_RECOVERY_MM in (12,11,10,9,8,7,6,5,4,3,2,1) and
+case when ccp.project_nme is not null then ccp.program_id else
+ case when ccp2.project_nme is not null then ccp2.program_id else
+ case when ccp3.project_nme is not null then ccp3.program_id else
+ case when ccp4.project_nme is not null then ccp4.program_id else null end end end end
+ IN (1495, 1496, 1498, 1497, 1429, 1431, 27) and
+ RC_AGENCY_REPORTING_CODE = 'CDFO'
+ and m.rc_fishery_code in ('Z')
+ and m.Rc_SPECIES_MRP_NAME = 'Chinook'
+ and rc_Catch_Region_name not in ('Freshwater Sport','Northern Sport')
+ and m.RC_DATE_RECOVERY_MM is not null
+ and rl.rl_tagcode is not null
+
+)
+, shrp as (
+select shrp1.* from shrp1
+left join labels ON regexp_replace(labels.head_tag,'[^0-9]','')= regexp_replace(shrp1.CWT_Head_Label,'[^0-9]','')
+AND TO_CHAR(labels.CDate,'YYYY') = shrp1.Year
+where labels.head_tag is null
+)
+
+select /*+ opt_param('optimizer_features_enable' '11.2.0.4') */ * from collected 
+union
+select /*+ opt_param('optimizer_features_enable' '11.2.0.4') */ * from shrp

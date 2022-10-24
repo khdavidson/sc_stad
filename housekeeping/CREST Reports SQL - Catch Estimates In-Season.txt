@@ -1,0 +1,12 @@
+SELECT ce.ID, ce.YEAR, ce.MONTH, ce.area as area_id, ce.subarea as aoi_id, csa.sml_Area_nme as area_of_interest, ce.region, ce."AREA(2)",
+ ce.region2, ce.MANAGEMENT, ce.species, ce.TYPE, ce.sub_type,
+ ce.species_txt, ce.species_txt2, ce.grp, ce.val, ce.valtype,
+ ce.datasource, ce.SOURCE, ce.description, ce.status, ce.datesinc, ce.marks_desc, ce.fsize_Desc
+ FROM v_creel_catch_est_prelim ce 
+ left join creel_Crest_sml_area csa on ce.sml_Area_id_id = csa.sml_Area_id
+ left join creel_Crest_lrg_Area cla on csa.lrg_Area_id_id = cla.lrg_Area_id
+ left join creel_crest_program ccp on cla.program_id_id = ccp.program_id
+ WHERE ce.YEAR IN (2021) AND ce.MONTH IN (12,11,10,9,8,7,6,5,4,3,2,1) AND ccp.program_id in (1498, 1430)
+
+
+

@@ -6,6 +6,11 @@
 # http://pac-salmon.dfo-mpo.gc.ca/Nuseds.Query/#/Query
 # This function is borrowed from tagFisheryMapping package - thanks N. Komick 
 
+# 0. Load packages ----------------------
+library(httr)
+library(askpass)
+
+
 # 1. CONNECT TO DATABASE: ----------------------
 getNuSEDS <- function(query_doc, password = NULL) {
   nuseds_url <- "http://pac-salmon.dfo-mpo.gc.ca/Api.NuSEDS.v2/api/DynamicQuery/QueryResult"           # <-- NuSEDS API address 
@@ -56,6 +61,11 @@ coho26.esc <- getNuSEDS("~/[your working directory]/nuseds_esc_query_COHOArea26.
 # http://pac-salmon.dfo-mpo.gc.ca/Nuseds.Query/#/Query
 # This function is borrowed from tagFisheryMapping package - thanks N. Komick  
 
+# 0. Load packages ----------------------
+library(httr)
+library(askpass)
+
+
 # 1. CONNECT TO DATABASE: ----------------------
 # function same as above 
 
@@ -72,6 +82,11 @@ coho26.ages <- getNuSEDS("~/[your working directory]/nuseds_padsCU_query_Area22.
 # ====================== CONNECTING TO MRP Extractor 'front-end' ======================
 # http://pac-salmon.dfo-mpo.gc.ca/DataExtractor/
 # This function is borrowed from tagFisheryMapping package - thanks N. Komick  
+
+# 0. Load packages ----------------------
+library(httr)
+library(askpass)
+
 
 # 1. CONNECT TO DATABASE: ----------------------
 getExtractorData <- function(query_doc, password = NULL) {
@@ -125,7 +140,7 @@ SJ.releases <- getNuSEDS("~/[your working directory]/mrp_releases_SJ.json", pass
 # ====================== CONNECTING TO CREST/FOS ====================== 
 # Thanks to A. Porter!
 
-# 0. Download Oracle Client 12 from Software Centre 
+# 0. Download Oracle Client 12 from Software Center 
 
 
 # 1. CONNECT TO DATABASE: ----------------------
@@ -163,7 +178,7 @@ odbcListObjectTypes(con)
 
 # ====================== ALTERNATIVE CREST/FOS CONNECTION ======================           (not fully examined for SC purposes... tbd)
 # see package FOSer by M. Folkes: https://gitlab.com/MichaelFolkes/foser
-# Install instructions here: \\dcbcpbsna01a.ENT.dfo-mpo.ca\Salmon$\FOS_R
+# **READ FIRST** Install instructions here (including installing Oracle driver from Software Center): \\dcbcpbsna01a.ENT.dfo-mpo.ca\Salmon$\FOS_R
 
 
 

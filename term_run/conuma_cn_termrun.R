@@ -1,21 +1,60 @@
 
-# CONUMA Chinook terminal run reconstruction
+
+####### BEFORE STARTING IN R: ####### 
+
+####### Extract files from databases -------------------
+# 1. CREST: 'WCVI Chinook Run Reconstruction Project Biological Data With FOS' Report > most recent 4 years, all months, Nootka Sound/Nootka Sound > Save to Excel as "CREST_Export_WCVI_Chinook_Run_Reconstruction_Project_Biological_Data_with_FOS_Nootka[years-years].xlsx"
+# 2. CREST: 'Catch Estimates - In-Season' Report > run reconstruction year, all months, Nootka Sound/Nootka Sound > Save to Excel as "CREST_Export_Catch_Estimates_-_Inseason_Nootka[year].xlsx"
+# 3. FOS: ... 
+# 4. Oto Manager: Recovery Specimens > most recent 4 years, chinook, PFMA 25, include age > Generate > Save to Excel as "OTOMGR_Export_RecoverySpecimens_PFMA25[years-years].xlsx"
+####### Gather auxiliary files (these are individual Excel files not extracted from databasese) -------------------
+# 1. EO data from RM (may now be in FOS, tbd)
+# 2. SEP age/comp data from EPRO (will shift to above when StA gets access)
+# 3. Misc GSI files (e.g., EO GSI files not in CREST or FOS)
+# 4. Escapement data 
+####### 
+
+
+######################################################################################################################################################
+
+
+# CONUMA Chinook terminal run reconstruction background script to accompany Rmd 
 # June 2022
+
 
 # set wd and settings -------------------
 setwd("~/ANALYSIS/data/ck_run_recon")
 options(scipen = 999999)
+
 
 # load packages -------------------
 library(tidyverse)
 library(readxl)
 
 
-# =================== Load and clean data ===================
+# set analysis year, age min and max -------------------
+RR_year <- 2021
+RR_ages <- data.frame(RESOLVED_AGE=c(2:6))
 
-# RECREATIONAL -------------------
-# Catch
-rec.catch <- read_excel("2021_SPORT_CATCH_DATA-SC Sport Catch Creel Sub-area Disposition.xlsx", sheet="YTD") %>%
+
+# Define function to covert date to stat week for commercial data -------------------
+statWeek <- function(date_variable){
+  m <- lubridate::month(date_variable)
+  wk <- function(x) as.numeric(format(x, "%U"))
+  paste(m, wk(date_variable)-wk(as.Date(cut(date_variable, "month")))+1, sep="")
+} 
+
+
+######################################################################################################################################################
+
+#                                                              0. LOAD AND CLEAN DATA 
+
+
+# =================== DATABASE EXTRACTS ===================   [this may eventually be replaced with direct database connections]
+
+# CREST: Rec catch -------------------
+catRec <- read_excel("2021_SPORT_CATCH_DATA-SC Sport Catch Creel Sub-area Disposition.xlsx", sheet="YTD") %>%
+  filter(SPECIES=="CHINOOK SALMON", PFMA=="PFMA 25", YEAR==RR_year, MONTH%in%c("July", "August", "September"), !is.na(CREEL_SUB_AREA2)) %>%
   mutate(MONTH = factor(MONTH, levels=month.name),
          CREEL_SUB_AREA2 = case_when(CREEL_SUB_AREA=="25D"~"Tlupana",
                                      CREEL_SUB_AREA=="25L"~"Muchalat",
@@ -27,44 +66,30 @@ rec.catch <- read_excel("2021_SPORT_CATCH_DATA-SC Sport Catch Creel Sub-area Dis
          data_class="catch") %>%
   print()
 
-# Age
-rec.ages <- read_excel("2020-21_CHINOOK_BIODATA_from_CREST-WCVI_CN_RunRecon_Query_28Feb2022.xlsx", 
-                           sheet="JB - TERMCON PVT", range=cell_cols("A:CJ"), guess_max=10000) %>%  # had to use this tab because some manual PBT data was added
-  mutate(MONTH = factor(MONTH, levels=month.name),
-         RUN_RECON_AREA2 = ifelse(RUN_RECON_AREA%in%c("Outer Nootka","Area 125 Nootka Corridor"), "Outer Nootka/corridor",
-                                  ifelse(RUN_RECON_AREA%in%c("Outer Esperanza","Area 125 Esperanza Corridor"), "Outer Esperanza/corridor", RUN_RECON_AREA)),
-         data_class="age") %>%
-  print()
-
-# Stock comp from reccomm.comp below
+# CREST: Biodata ------------------- 
+bioCREST <- read_excel("CREST_Export_WCVI_Chinook_Run_Reconstruction_Project_Biological_Data_with_FOS_Nootka2018-2021.xlsx", sheet="WCVI_Chinook_Run_Rec") %>% 
+  mutate(data_input_type="catch")
 
 
-# COMMERCIAL (GN/SN) -------------------
-# Catch
-comm.catch <- read_excel("FOS Dump for 2021 Fisheries (Feb 10, 2022).xlsx", sheet="fos_VANWILLP", n_max=Inf, guess_max=20000, skip=2) %>%
+# FOS: Commercial catch -------------------
+catComm <- read_excel("FOS Dump for 2021 Fisheries (Feb 10, 2022).xlsx", sheet="fos_VANWILLP", n_max=Inf, guess_max=20000, skip=2) %>%
   mutate(year = lubridate::year(FISHING_DATE),
-         data_class="catch") %>%
-  print()
-
-# Age
-comm.ages.raw <- read_excel("2021_WCVI_Chinook_Run_Reconstruction_Project_Biological_Data_with_FOS (Wednesday, February 23, 2022 1 48 PM).xlsx", 
-                            sheet="WCVI_Chinook_Run_Rec", guess_max=20000) %>%
-  mutate_at("SAMPLE_TYPE", as.factor) %>%
-  mutate(data_class = "age") %>%
-  print()
-
-# Stock comp (comm & rec)
-reccomm.comp <- read_excel("2020-21_CHINOOK_BIODATA_from_CREST-WCVI_CN_RunRecon_Query_28Feb2022.xlsx", 
-                               sheet="WCVI_Chinook_Run_Rec", n_max=Inf, guess_max=20000) %>%
-  mutate(MONTH = factor(MONTH, levels=month.name),
-         RUN_RECON_AREA2 = ifelse(RUN_RECON_AREA%in%c("Outer Nootka","Area 125 Nootka Corridor"), "Outer Nootka/corridor",
-                                  ifelse(RUN_RECON_AREA%in%c("Outer Esperanza","Area 125 Esperanza Corridor"), "Outer Esperanza/corridor", RUN_RECON_AREA)),
-         data_class="stock composition") %>%
+         data_input_type="catch") %>%
   print()
 
 
-# COMMERCIAL (5N ISBM) -------------------
-# Catch
+# OTOMANAGER: Thermal mark ------------------- 
+bioTM <- read_excel("2020 Thermal Mark Samples Status_26Feb2021.xlsx", sheet="2019_Specimen_Hatch_Age",skip=2, guess_max=20000) %>%
+  filter(SPECIES=="Chinook") %>%
+  mutate(data_input_type="stock composition") %>% 
+  print()
+
+
+
+
+# =================== AUX FILES ===================
+
+# EO (5 Nations) CATCH -------------------
 n5.catch <- rbind(
   read_excel("Five Nations 2021 Catch by PFMA by Month_nearshore.xlsx", sheet="Sheet1", range="I2:J3") %>%
     pivot_longer(`Five Nations ISBM Muchalaht  Chinook sold -`, names_to="catch_data_source", values_to = "month") %>%
@@ -86,19 +111,14 @@ n5.catch <- rbind(
          data_class="catch") %>% 
   print()
 
-# Age
-fn.agecomp.raw <- read_excel("PID20200133_Taaq_A25(20)_sc276_2021-03-23.xlsx", sheet="collection_table_ids") %>%
-  mutate(data_class="age")
 
-# Stock comp
-thermal.comp <- read_excel("2020 Thermal Mark Samples Status_26Feb2021.xlsx", sheet="2019_Specimen_Hatch_Age",skip=2, guess_max=20000) %>%
-  filter(SPECIES=="Chinook") %>%
-  mutate(data_class="stock composition") %>% 
-  print()
+# GSI ------------------- 
+bioEO_GSI <- read_excel("PID20200133_Taaq_A25(20)_sc276_2021-03-23.xlsx", sheet="collection_table_ids") %>%
+  mutate(data_input_type="stock comp")
 
 
-# SEP age data -------------------
-sep.ages <- read_excel("All_PADS_2021_CN_Ages_to_22Feb2022.xlsx", sheet="2021 Data", skip=1, guess_max=20000) %>%
+# SEP: Age and sex data -------------------
+bioSEP <- read_excel("All_PADS_2021_CN_Ages_to_22Feb2022.xlsx", sheet="2021 Data", skip=1, guess_max=20000) %>%
   filter(`Fiscal Year`==2021, Project=="CONUMA RIVER HATCHERY -2021", `Geographic Location`=="WCVI", 
          `GR Age`%in%c("21","31","41","51","1M","2M","3M","4M")) %>%
   mutate(`GR Age2` = case_when(`GR Age`%in%c("21","1M")~"2",
@@ -120,29 +140,9 @@ sep.ages <- read_excel("All_PADS_2021_CN_Ages_to_22Feb2022.xlsx", sheet="2021 Da
   print()
 
 
-# Conuma Hatchery & River -------------------
-# Escapement
+# [Conuma Hatchery & River Escapement] -------------------
+# [tbd]
 
-
-
-
-
-
-
-
-# =================== Define variables and functions for use ===================
-
-# set analysis year, age min and max -------------------
-RR_year <- 2021
-RR_ages <- data.frame(RESOLVED_AGE=c(2:6))
-
-
-# Define function to covert date to stat week for commercial data -------------------
-statWeek <- function(date_variable){
-  m <- lubridate::month(date_variable)
-  wk <- function(x) as.numeric(format(x, "%U"))
-  paste(m, wk(date_variable)-wk(as.Date(cut(date_variable, "month")))+1, sep="")
-} 
 
 
 
@@ -156,6 +156,38 @@ statWeek <- function(date_variable){
 
 
 ##########################################################################################################################################################
+
+
+# Extr
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

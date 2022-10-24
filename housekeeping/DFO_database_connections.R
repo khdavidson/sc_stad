@@ -71,7 +71,7 @@ library(askpass)
 
 
 # 2. QUERY DATABASE: ---------------------- 
-# Requires a .json script to accompany it - see example 'nuseds_esc_query_COHOArea26.json' file 
+# Requires a .json script to accompany it - see example 'nuseds_padsCU_query_Area22.json' file 
 coho26.ages <- getNuSEDS("~/[your working directory]/nuseds_padsCU_query_Area22.json", password=NULL)     # will prompt and ask for DFO computer password
 
 

@@ -1,0 +1,47 @@
+{
+   "Schema": "NUSEDS_RPT",
+   "DataSource": "PADS_CU_DATA",
+   "Fields": [
+      "PAC_CDE" ,
+      "ECO_CDE" ,
+      "AGE",
+      "AGE_UOM" ,
+      "READING_METHOD" ,
+      "MTP_ID" ,
+      "FORMAT" ,
+      "AGE_GR" ,
+      "AGE_EU" ,
+      "SCALE_CONTAINER_ADDR" ,
+      "CU_NAME" ,
+      "CU_INDEX" ,
+      "AREA" ,
+      "GEOGRAPHICAL_EXTNT_OF_ESTIMATE" ,
+      "SPECIES_QUALIFIED" ,
+      "POPULATION" ,
+      "PRJ_ID" ,
+      "POP_ID",
+      "PROJECT" ,
+      "GFE_ID" ,
+      "LOCATION" ,
+      "FISCAL_YEAR" ,
+      "SAMPLE_#" ,
+      "SBJ_ID" ,
+      "SPECIES" ,
+      "ACY_ID" ,
+      "SAMPLE_SOURCE" ,
+      "GCO_CDE" ,
+      "GEAR" ,
+      "LIFE_HISTORY_STAGE" ,
+      "SAMPLE_START_DT" ,
+      "SAMPLE_END_DT" ,
+      "CONTAINER_LABEL" 
+   ],
+   "Aggregates": [],
+   "Filters": [
+      {
+         "Column": "AREA",
+         "Value": "'22'"
+      }
+   ],
+   "Orders": []
+}

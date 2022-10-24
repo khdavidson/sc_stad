@@ -1,0 +1,61 @@
+{
+   "Schema": "NUSEDS_RPT",
+   "DataSource": "ALL_SPECIES_CU_DATA",
+   "Fields": [
+      "ACT_ID",
+      "ANALYSIS_YR",
+      "DESCR",
+      "CU_NAME",
+      "CU_INDEX",
+      "CU_TYPE",
+      "AREA",
+      "GEOGRAPHICAL_EXTNT_OF_ESTIMATE",
+      "SPECIES",
+      "SPECIES_QUALIFIED",
+      "POPULATION",
+      "POP_ID",
+      "ESTIMATE_CLASSIFICATION",
+      "ESTIMATE_METHOD",
+      "MAX_ESTIMATE",
+      "TOTAL_BROODSTOCK_REMOVALS",
+      "TOTAL_RETURN_TO_RIVER",
+      "UNSPECIFIED_RETURN",
+      "NO_INSPECTIONS_USED",
+      "OTHER_REMOVALS",
+      "JACK_BROODSTOCK_REMOVALS",
+      "ADULT_BROODSTOCK_REMOVALS",
+      "NATURAL_SPAWNERS_TOTAL",
+      "NATURAL_JACK_SPAWNERS",
+      "NATURAL_ADULT_SPAWNERS",
+      "SEN_PRESENCE_JACK",
+      "SEN_PRESENCE_ADULT",
+      "WATERSHED_CDE",
+      "RUN_TYPE",
+      "SEN_NUSEDS1_ENUM_METHOD1",
+      "SEN_NUSEDS1_ENUM_METHOD2",
+      "SEN_NUSEDS1_ENUM_METHOD3",
+      "SEN_NUSEDS1_ENUM_METHOD4",
+      "SEN_NUSEDS1_ENUM_METHOD5",
+      "SEN_NUSEDS1_ENUM_METHOD6",
+      "EFFECTIVE_FEMALES",
+      "WEIGHTED_PCT_SPAWN",
+      "OTHER_ADULT_REMOVALS",
+      "OTHER_JACK_REMOVALS",
+      "TOT_ADULT_RET_RIVER",
+      "TOT_JACK_RET_RIVER",
+      "JUV_PRES_TYP",
+      "STREAM_ID" 
+   ],
+   "Aggregates": [],
+   "Filters": [
+      {
+         "Column": "SPECIES_QUALIFIED",
+         "Value": "'CO'"
+      },
+      {
+         "Column": "AREA",
+         "Value": "'26'"
+      }
+   ],
+   "Orders": []
+}

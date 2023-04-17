@@ -1,0 +1,182 @@
+---
+title: "San Juan RST 2023 In-season Update"
+date: 'Last update: `r Sys.Date()`'
+output: 
+  bookdown::html_document2:
+    toc: true
+    toc_float: true
+    toc_collapsed: false 
+    toc_depth: 5
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning=F, message=F)
+
+
+# libraries --------------------------------
+library(tidyverse)
+library(readxl)
+library(bookdown)
+library(kableExtra)
+library(cowplot)
+
+
+# read data --------------------------------
+enviro <- read_excel("C:/Users/DAVIDSONKA/OneDrive - DFO-MPO/# Study Designs/Juveniles/San Juan RST 2023/Field data entry/san_juan_data_entry_2023.xlsx", 
+                     sheet="Environmentals") %>% 
+  mutate(date_time_open = as.POSIXct(paste(date_open, time_open), sep=" "),
+         date_time_closed = as.POSIXct(paste(date_closed, time_closed), sep=" "))
+
+total_catch <- read_excel("C:/Users/DAVIDSONKA/OneDrive - DFO-MPO/# Study Designs/Juveniles/San Juan RST 2023/Field data entry/san_juan_data_entry_2023.xlsx", 
+                     sheet="Total catch")
+
+biosamples <- read_excel("C:/Users/DAVIDSONKA/OneDrive - DFO-MPO/# Study Designs/Juveniles/San Juan RST 2023/Field data entry/san_juan_data_entry_2023.xlsx",
+                     sheet="Biosamples") %>%
+  mutate(cond_factor = 10000*(weight/(length^3)),
+         life_stage = ifelse(is.na(life_stage),"", life_stage), 
+         species_stage = paste(species, life_stage, sep=" "))      
+
+EC_08HA10 <- read.csv("https://dd.weather.gc.ca/hydrometric/csv/BC/daily/BC_08HA010_daily_hydrometric.csv") %>%
+  rename(water_level = `Water.Level...Niveau.d.eau..m.`,
+         symbol=`Symbol...Symbole`,
+         symbol.1=`Symbol...Symbole.1`) %>%
+  mutate(Date = str_replace(Date, "T", " "),
+         Date = str_replace(Date, "-08:00", ""),
+         Date = as.POSIXct(Date),
+         time = format(Date,"%H:%M:%S"),
+         Date = as.Date(Date))
+names(EC_08HA10)[7] <- "discharge"
+```
+
+<br>
+
+**This update contains raw in-season data that has not been verified or quality-controlled. Any and all iformation is subject to change without notice, therefore caution should be used when interpreting these results**
+
+<br>
+
+<br>
+
+# Operations and environmentals
+
+The RST was installed `r min(as.Date(enviro$date_open))` with the first fishing period occurring from `r min(as.Date(enviro$date_time_open))` to `r min(as.Date(enviro$date_time_open))+1`. The most recent period of fishing ended `r max(as.Date(enviro$date_time_open))`. The RST has averaged `r round(mean(enviro$RST_RPMs),1)` RPMs (ranging from `r min(enviro$RST_RPMs)` to `r max(enviro$RST_RPMs)`).
+
+Water temperature in the river has been `r mean(enviro$water_temp, na.rm=T)` +/- `r round(sd(enviro$water_temp, na.rm=T),1)`C, while dissolved oxygen has been `r mean(enviro$DO, na.rm=T)` +/- `r round(sd(enviro$DO, na.rm=T),1)` %. The debris load in the RST has been mostly `r names(table(enviro$debris_load)[1])`. The HOBO temperature and DO logger has not been installed yet. A seal has been present consistently at the RST site.
+
+<br>
+
+```{r fig.cap='Daily mean discharge (cms, bordered by maximum and minimum, blue) and RST RPMs (orange).'}
+ggplot() +
+  # RST RPMs:
+  geom_point(data=enviro,
+             aes(x=as.Date(date_closed), y=RST_RPMs*75), size=3, shape=21, colour="orange", fill="orange") +
+  # EC data:
+  geom_ribbon(data=EC_08HA10%>%group_by(Date)%>%summarize(mean=mean(discharge),max=max(discharge),min=min(discharge)),
+              aes(x=as.Date(Date), ymin=min, ymax=max), fill="dodger blue", alpha=0.3) +
+  geom_line(data=EC_08HA10%>%group_by(Date)%>%summarize(mean=mean(discharge),max=max(discharge),min=min(discharge)),
+            aes(x=as.Date(Date), y=mean), colour="dodger blue", size=1) +
+  scale_y_continuous(sec.axis = sec_axis(~./75, name="RST RPMs")) +
+  labs(y="Mean discharge") +
+  theme_bw() +
+  theme(axis.text = element_text(colour="black"),
+        axis.title = element_text(face="bold"),
+        axis.title.x = element_blank(),
+        axis.title.y.left = element_text(colour="dodger blue"),
+        axis.title.y.right = element_text(colour="orange"))
+```
+
+
+<br>
+
+<br>
+
+# Total catch
+
+The table below summaries the total number of fish and bycatch caught as of this update. Figures below show abundances by catch date. Note that rainbow trout parr lifestage designation is uncertain.
+
+```{r}
+total_catch %>%
+  filter(!is.na(species)) %>%
+  mutate(life_stage = ifelse(is.na(life_stage),"", life_stage), 
+         species_stage = paste(species, life_stage, sep=" ")) %>%
+  group_by(species_stage) %>%
+  summarize(`Total caught`=sum(total_caught,na.rm=T)) %>%
+  arrange(desc(`Total caught`)) %>%
+  kbl(align="c", caption="Total caught in RST by species and life stage as of update.") %>%
+  kable_paper("hover", full_width=T, position = "center")  
+```
+
+<br>
+
+```{r, fig.cap='Total catch of focal species including sampled and mortalities.'}
+ggplot(data=total_catch%>%filter(species%in%c("chinook","coho","chum"))%>%
+         group_by(date_closed,species, life_stage) %>%summarize(total_caught=sum(total_caught,na.rm=T))%>%
+         mutate(species_stage=paste(species, life_stage, sep=" ")),
+       aes(x=as.Date(date_closed), y=total_caught, group=species_stage, fill=species_stage, colour=species_stage)) +
+  geom_bar(stat="identity", position="dodge", alpha=0.8) +
+  scale_x_date(date_breaks = "1 day", date_labels="%b %d") +
+  labs(x="", y="Total caught") +
+  theme_bw() +
+  theme(axis.text = element_text(colour="black"),
+        axis.title = element_text(face="bold"),
+        legend.background = element_rect(colour="black"),
+        legend.position = c(0.1,0.8),
+        legend.title = element_blank())
+```
+
+
+<br>
+
+<br>
+
+# Biosamples
+
+The table below gives averages lengths and weights for the main salmon species by life stage encountered. 
+
+```{r}
+biosamples %>%
+  filter(!is.na(species)) %>%
+  group_by(species_stage) %>%
+  summarize(`Average fork length (mm)` = paste(round(mean(length,na.rm=T),2), "+/-", round(sd(length,na.rm=T),2)) ,
+            `Average weight (g)` = paste(round(mean(weight,na.rm=T),2), "+/-", round(sd(weight,na.rm=T),2))) %>%
+  kbl(align="c", caption="Average length and weight of the main salmon species by life stage encountered in the RST.") %>%
+  kable_paper("hover", full_width=T, position = "center")  
+```
+
+```{r, fig.cap='Daily fork length and condition factor for focal species. Condition factor = 10000*(weight/(length^3)).'}
+plot_grid(
+  ggplot(data=biosamples%>%filter(species%in%c("coho","chum","chinook"))) +
+    geom_jitter(aes(x=as.Date(date_closed), y=length, group=species_stage, colour=species_stage), 
+                width=0.15, alpha=0.5, size=3, shape=16) +
+    scale_x_date(date_breaks="3 day", date_labels="%b %d") +
+    labs(x="",y="Fork length (mm)") +
+    theme_bw()+
+    theme(axis.text.x = element_text(colour="black"),
+          axis.title = element_text(face="bold"),
+          legend.title = element_blank(),
+          legend.position = c(0.25,0.7),
+          legend.background = element_rect(colour="black"),
+          legend.spacing.y = unit(1, "points"),
+          legend.spacing.x = unit(1, "points"),
+          legend.key.height = unit(10, "points"),
+          legend.key.width = unit(15, "points")),
+  
+  ggplot(data=biosamples%>%filter(species%in%c("coho","chum","chinook"))) +
+    geom_jitter(aes(x=as.Date(date_closed), y=cond_factor, group=species_stage, colour=species_stage), 
+                width=0.15, alpha=0.5, size=3, shape=16) +
+    scale_x_date(date_breaks="3 day", date_labels="%b %d") +
+    labs(x="",y="Condition factor (K)") +
+    theme_bw()+
+    theme(axis.text.x = element_text(colour="black"),
+          axis.title = element_text(face="bold"),
+          legend.position="none") ,
+  nrow=2
+)
+```
+
+
+
+
+
+
+

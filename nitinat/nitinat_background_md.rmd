@@ -1,0 +1,530 @@
+---
+title: "**Nitinat backgrounnd**"
+date: 'Last update: `r Sys.Date()`'
+output: 
+  bookdown::html_document2:
+    toc: true
+    toc_float: true
+    toc_collapsed: false 
+    toc_depth: 5
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=F, warning=F, message=F)
+options(scipen=9999)
+
+# Load packages -----------------------
+library(tidyverse)
+library(httr)
+library(askpass)
+library(readxl)
+library(openxlsx)    # for createWorkbook() etc
+library(kableExtra)
+library(janitor)     # for row_to_names()
+library(bookdown)
+
+
+# Set wd -----------------------
+source("~/ANALYSIS/scripts/sc_stad/nitinat/nitinat_background.R", local = knitr::knit_global())
+
+
+# ******** NEXT DAY!!
+## priorities to support term RR: 
+# get CREST data in - load in the renfrew/swift biodata first and summarize (look at age structure over time, by area, whether adding area 20 changes things, see running averages/recent year averages age comp, stock comp by area ~ time and running averages as well, etc.)
+
+## additiona: 
+# then CREST data do queries: WCVIcoast-wide other areas (conuma, barkley, etc.) to see where nitinat are caught 
+# then otomanager if needed (?)
+# ask Jake for PNI? 
+```
+
+<br>
+
+<br>
+
+<br> 
+
+# **Escapement, age and origin**
+
+```{r include=F}
+# All species and tribs -----------------------  (not run; too big)
+ggplot(nit_plot, aes(x=as.numeric(`Analysis Year`), y=as.numeric(n), fill=CK_est, colour=CK_est)) +
+  geom_line(size=0.7, alpha=0.7) +
+  geom_point(size=2, stroke=1.2, alpha=0.7) +
+  labs(x="Return Year", y="Number of fish", group="Number of fish", fill="Number of fish", colour="Number of fish") +
+  theme_bw() +
+  theme(axis.text = element_text(colour="black"),
+        axis.title = element_text(face="bold"),
+        panel.grid = element_blank(),
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.background = element_rect(colour="black")) +
+  facet_wrap(`Waterbody Name`~Species, scales="free")
+```
+
+```{r nit-esc-brood, fig.cap='Escapement and broodstock removals for Nitinat River salmon. Data from NuSEDS.'}
+# SJ Chinook only ----------------------- 
+ggplot() +
+  geom_bar(data=nit_plot %>% filter(`Waterbody Name`=="NITINAT RIVER")%>%
+             group_by(`Analysis Year`,CK_est,Species)%>%summarize(TOTAL=sum(n,na.rm=T)), 
+           aes(x=as.numeric(`Analysis Year`), y=TOTAL, group=CK_est, fill=CK_est),
+           stat="identity", position="stack", size=0.7, width=1, colour="black") +
+  labs(x="Return Year", y="Number of salmon") +
+  theme_bw() +
+  theme(axis.text = element_text(colour="black", size=10),
+        axis.title = element_text(face="bold", size=12),
+        panel.grid = element_blank(),
+        legend.position = c(0.8,0.15),
+        legend.background = element_rect(colour="black"),
+        legend.title = element_blank(),
+        legend.text = element_text(size=10),
+        plot.caption = element_text(hjust=0, face="italic")) +
+  facet_wrap(~Species,scales="free",nrow=3)
+```
+
+<br>
+
+```{r age-tab}
+# Overall age structure -----------------------
+nitAge %>% 
+  group_by(`Fiscal Year`, `Species Qualified`, resolved_age) %>% 
+  summarize(n=n()) %>% 
+  group_by(`Fiscal Year`, `Species Qualified`) %>% 
+  mutate(sum=sum(n), propn=n/sum(n)) %>%
+  group_by(`Species Qualified`, resolved_age) %>% 
+  summarize(avg_propn = mean(propn), sd_propn=sd(propn)) %>% 
+  mutate(avg_propn=round(avg_propn,3)*100, sd_propn=round(sd_propn,3)*100) %>%
+  unite(col="Average proportion (± SD)", c(avg_propn, sd_propn), sep=" ± ") %>%
+  rename(Age=resolved_age) %>%
+  filter(Age!=0) %>%
+  kbl(align="c", caption = "Age structure of Nitinat chinook, chum and coho (excludes tributaries). Data from NuSEDS.") %>%
+  kable_paper("hover", full_width=T, position = "center") %>%
+  collapse_rows(columns=c(1,2), valign="middle")
+```
+
+<br>
+
+```{r age-temp-fig, fig.cap='Annual age structure of Nitinat chinook, chum and coho (excludes tributaries). Bars labelled if the age proportion was >= 50% each year. Data from NuSEDS (PADS).', out.width="100%"}
+# FIGURE: AGE ~ TIME ----------------------- 
+ggplot(nitAge %>% 
+         group_by(`Fiscal Year`, `Species Qualified`, resolved_age) %>% 
+         summarize(n=n()) %>% 
+         group_by(`Fiscal Year`, `Species Qualified`) %>% 
+         mutate(propn=round(n/sum(n),2),
+                label=ifelse(propn>=0.5,propn,NA),
+                sum=sum(n))%>%
+         filter(resolved_age>0),
+       aes(x=as.numeric(`Fiscal Year`), y=propn, group=as.factor(resolved_age), fill=as.factor(resolved_age), colour=as.factor(resolved_age),
+           label=label)) +
+  geom_point(size=2.5, alpha=0.6) +
+  geom_line(size=0.7, alpha=0.6) +
+  #geom_bar(stat="identity", position="stack", width=0.6, alpha=0.8) +
+  #geom_text(size=3, position=position_stack(vjust = 0.5), colour="black") +
+  geom_text(aes(label=sum, y=1.1), size=3, angle=45, vjust=-0.1, hjust=-0, colour="gray60")+ 
+  scale_x_continuous(breaks=seq(1989,2022,by=1)) +
+  scale_y_continuous(limits=c(0,1.5), breaks=seq(0,1,by=0.25)) +
+  labs(x="", y="Proportion", fill="Age:", colour="Age:") +
+  theme_bw() +
+  theme(axis.text = element_text(colour="black", size=11),
+        axis.text.x = element_text(angle=45, hjust=1),
+        axis.title = element_text(face="bold", size=13),
+        legend.position = "right",
+        legend.direction = "vertical",
+        legend.title = element_text(face="bold"),
+        plot.caption = element_text(face="italic", hjust=0)) +
+  facet_wrap(~`Species Qualified`, nrow=3)
+```
+
+```{r include=F}
+nitAgeTrunc <- nitAge %>% 
+  filter(`Species Qualified`=="CK") %>%
+  group_by(`Fiscal Year`, resolved_age) %>% 
+  summarize(n=n()) %>% 
+  group_by(`Fiscal Year`) %>% 
+  mutate(propn=round(n/sum(n),2),
+         sum=sum(n),
+         source="PADS")%>%
+  filter(resolved_age>0 & `Fiscal Year`%in%c(2018:2020)) %>%
+  rename(YEAR=`Fiscal Year`,
+         RESOLVED_AGE=resolved_age) %>%
+  mutate_at("YEAR", as.factor) %>%
+  print()
+
+nitCRESTescAge <- nitCRESTescAge %>%
+  mutate_at("YEAR", as.factor) %>%
+  mutate(source="CREST")
+
+
+nitAgecomp <- full_join(nitAgeTrunc, nitCRESTescAge)
+```
+
+Some weird discrepancies in age data sometimes between CREST Escapement data and NuSEDS PADS... (Fig. @\ref(fig:age-comp-fig)). 
+
+```{r age-comp-fig, fig.cap='Age structure of Nitinat Chinook samples from CREST and NuSEDS PADS.'}
+# FIGURE: AGE ~ TIME ----------------------- 
+ggplot(nitAgecomp) +
+  geom_bar(aes(x=YEAR, y=propn, group=interaction(as.factor(RESOLVED_AGE),source), fill=as.factor(RESOLVED_AGE), colour=source),
+       stat="identity", position="stack", colour="black", width=0.6, alpha=0.8) +
+  labs(x="", y="Proportion", fill="Age:", colour="Age:") +
+  theme_bw() +
+  theme(axis.text = element_text(colour="black", size=11),
+        axis.text.x = element_text(angle=45, hjust=1),
+        axis.title = element_text(face="bold", size=13),
+        legend.position = "right",
+        legend.direction = "vertical",
+        legend.title = element_text(face="bold"),
+        plot.caption = element_text(face="italic", hjust=0)) +
+  facet_wrap(~source, scales="free")
+```
+
+<br>
+
+
+<br>
+
+```{r eval=F,include=F}
+sj.otoTM.rcvy <- otoTM.rcvyA20 %>% 
+  filter(grepl("SAN JUAN", `RCVY LOCATIONS`)) %>% 
+  group_by(`SAMPLE YR`, SOURCE, FACILITY) %>% 
+  summarize(n=n()) %>% 
+  mutate(FACILITY = ifelse(grepl("SAN JUAN", FACILITY), "SAN JUAN RIVER HATCHERY", FACILITY),
+         FACILITY2 = ifelse(FACILITY=="SAN JUAN RIVER HATCHERY", "SAN JUAN RIVER HATCHERY", ifelse(is.na(FACILITY), NA, "Other hatchery"))) %>% 
+  group_by(`SAMPLE YR`, SOURCE, FACILITY2) %>% 
+  summarize(n=sum(n)) %>% 
+  group_by(`SAMPLE YR`, SOURCE) %>%
+  mutate(total=sum(n), `Propn (%)`=round(n/sum(n)*100,0),
+         `Hatchery origin?` = ifelse(is.na(FACILITY2), "N/unk", "Y")) %>% 
+  select(SOURCE, `SAMPLE YR`, total, `Hatchery origin?`, FACILITY2, n, `Propn (%)`) %>%
+  arrange(SOURCE,`SAMPLE YR`) %>%
+  print()
+```
+
+```{r eval=F}
+sj.otoTM.rcvy %>%
+  kbl(align="c") %>%
+  kable_paper("hover", full_width=T, position = "center") %>%
+  collapse_rows(columns=c(1,2,3), valign="middle") 
+```
+
+<br>
+
+```{r eval=F}
+ggplot() +
+  geom_bar(data=sj.otoTM.rcvy, aes(x=`SAMPLE YR`, y=`Propn (%)`, group=`Hatchery origin?`, fill=`Hatchery origin?`, colour=`Hatchery origin?`), stat="identity", position="stack", alpha=0.7, size=1) +
+  #geom_point(data=sj.otoTM.refNAs, aes(x=as.numeric(BROOD.YEAR), y=link), size=2) +
+  labs(x="Sample year", y="Proportion in oto TM recoveries (%)", caption="Fig. Proportion of Chinook recovered in the San Juan River that are hatchery (blue) and natural/unknown (pink) origin \nbased on otolith thermal mark recoveries. Overlapping shading represents occasional small number of hatchery strays \nencountered. This does not take into account marking/release effort and strategies; it is important to consider thermal \nmarking strategies/effort given below.") +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        legend.direction = "horizontal",
+        plot.caption = element_text(hjust=0, face="italic"),
+        panel.grid = element_blank()) +
+  facet_wrap(.~SOURCE, nrow = 2, scales="free")
+```
+<br>
+
+
+<br> 
+
+------------------------
+
+# **Enhancement activity**
+
+
+
+<br>
+
+## Release history
+
+```{r rel-tab}
+# Just Releases ----------------------- 
+nit_rel_sum %>%
+  ungroup() %>%
+  arrange(`Species Name`,`Release Site Name`, `Brood Year`) %>%
+  rename(`Total released`=TOTAL,
+         `CWT+AD`=CWT_afc,
+         `AD only`=untag_afc,
+         `Unmarked`=untag_unmark,
+         `CWT+AD (%)`=propn_CWTafc,
+         `AD only (%)` = propn_untagafc,
+         `Unmarked (%)` = propn_untagunmark,
+         `Total marked (%)` = propn_marked) %>%
+  mutate(across(`CWT+AD (%)`:`Total marked (%)`, ~ round(.x*100, 0))) %>%
+  kbl(align="c", caption = "Nitinat Hatchery releases by species, release site and brood year. Proportion columns are proportion of row totals (not cohort, species or site totals).") %>%
+  kable_paper("hover", full_width=T, position = "center") %>%
+  collapse_rows(columns=c(1,2,3), valign="middle")
+```
+
+<br>
+
+<br>
+
+## Escapement, brood collection and releases
+
+```{r esc-brood-rel-fig, fig.cap='Escapement, broodstock removals and releases for Nitinat River enhancement activity. Years represent "raw" data and have not been altered to align juvenile releases with corresponding escapement returns. Escapement data from NuSEDS, release data from MRP.', out.width='100%'}
+ggplot() +
+  geom_bar(data=nit_rel_sum%>%group_by(`Species Name`, `Brood Year`)%>%summarize(TOTAL=sum(TOTAL))%>%rename(Species=`Species Name`), 
+           aes(x=`Brood Year`, y=TOTAL/100), stat="identity", fill="gray60", size=0, alpha=0.5, width=0.8) +
+  geom_line(data=nit_plot%>%filter(`Waterbody Name`=="NITINAT RIVER"), 
+            aes(x=as.numeric(`Analysis Year`), y=as.numeric(n), group=CK_est, colour=CK_est), size=0.5, alpha=0.5) +
+  geom_point(data=nit_plot%>%filter(`Waterbody Name`=="NITINAT RIVER"), 
+             aes(x=as.numeric(`Analysis Year`), y=as.numeric(n), group=CK_est, fill=CK_est, colour=CK_est), size=1, stroke=0.5, alpha=0.5) +
+  scale_y_continuous(sec.axis = sec_axis(~., name="Hatchery releases (100s by BY)")) +
+  scale_x_continuous(breaks=seq(1950,2022,by=5)) +
+  labs(x="Year", y="Escapement (by RY)") +
+  theme_bw() +
+  theme(axis.text = element_text(colour="black"),
+        axis.text.x = element_text(angle=45, hjust=1),
+        axis.title = element_text(face="bold"),
+        panel.grid = element_blank(),
+        legend.title = element_blank(),
+        legend.position = "bottom",
+        legend.direction = "horizontal",
+        legend.background = element_rect(colour="black")) +
+  facet_wrap(~Species, scales='free', nrow=3)
+```
+
+<br>
+
+## Size and timing at release 
+
+
+
+<br>
+
+## Thermal marking history and recovery
+
+```{r eval=F, include=F}
+sj.otoTM.ref <- otoTM.ref %>% 
+  filter(grepl("SAN JUAN", FACILITY)) %>% 
+  group_by(BROOD.YEAR, QUALITY) %>% 
+  summarize(n=n()) %>% 
+  mutate(QUALITY = ifelse(is.na(QUALITY), NA, "Good/Acceptable")) %>% 
+  group_by(BROOD.YEAR) %>% 
+  mutate(quality_total=sum(n), propn=round(n/quality_total*100,1)) %>%
+  print()
+
+sj.otoTM.refNAs <- sj.otoTM.ref %>% 
+  filter(is.na(QUALITY), BROOD.YEAR>=2014) %>% 
+  select(BROOD.YEAR) %>% 
+  mutate(link=100) %>% 
+  print()
+```
+
+```{r eval=F}
+ggplot(sj.otoTM.ref, aes(x=BROOD.YEAR, y=propn, colour=QUALITY, fill=QUALITY)) +
+  geom_bar(stat="identity") +
+  labs(y="Proportion of reference specimens") +
+  theme_bw()
+```
+
+<br>
+
+## PBT
+
+
+
+## PNI
+
+
+<br>
+
+<br>
+
+<br> 
+
+------------------------
+
+# **Sport fishery composition** 
+
+## Chinook
+
+### Stock ID and origin
+
+Stock comp within area 21/22 (and 20-adj):
+
+Where are Nitinat fish caught elsewhere in CREST finescale fisheries: 
+
+```{r eval=F, include=F}
+# ===================== REC CATCH =====================
+# Replace Resolved_stock_origin because it's not as conservative as it should be (PVW discussion)
+# n = 360 total San Juan River fish based on CREST Excel file RESOLVED_STOCK_ORIGIN=="San Juan River" 
+# n = 24 with PROB_1<0.7  (n=22 with no CWT or oto marks AND PROB_1<0.7)
+# n = 23 with PROB_1==" "
+
+# Re-do stock, source and hatchery origin assignment -------------------------
+rec.biodat <- rec.catch.biodata %>% 
+  #select(-c(RECEIVED_SCALES:SCALE_SUBMISSION_NUMER, BIOKEY:FISH_NO,REFERENCE_NO,COLLECTION_DATE,DAYOFYEAR,FISHING_LOCATION:SPECIES,SIZE_CAT,LENGTH_MM,SEX,
+  #          OTOLITH_BOX,OTOLITH_SPECIMEN,SCALE_BOOK:PART_AGE_CODE, CWT_BROOD_YEAR:RESOLVED_STOCK_REGION,DNA_STOCK_3:FisheryCatRegion2)) %>%
+  mutate(BY = YEAR-RESOLVED_AGE,
+         # CWT ------------------------
+         # If CWTs aren't messy, use CWT, otherwise blank
+         RESOLVED_STOCK_ORIGIN2 = ifelse(!CWT_RESULT%in%c(is.na(CWT_RESULT), "No Tag", "Lost Tag", "No Head", grepl("No Result", CWT_RESULT)),
+                                         CWT_RESULT, NA),
+         # If the stock ID isn't blank, it's CWT
+         RESOLVED_STOCK_SOURCE2 = ifelse(!is.na(RESOLVED_STOCK_ORIGIN2), "CWT", NA),
+         
+         
+         # OTOLITH ------------------------
+         # if there's still no stock ID and there is otolith marks, use otoliths, otherwise blank
+         RESOLVED_STOCK_ORIGIN2 = ifelse(is.na(RESOLVED_STOCK_ORIGIN2) & !is.na(OTO_STOCK) & !is.na(OTOLITH_RESOLVED_RESULT), OTOLITH_RESOLVED_RESULT, 
+                                         RESOLVED_STOCK_ORIGIN2),
+         # If stock ID isn't blank (ie, there is a stock ID) but the source is unknown, it's oto
+         RESOLVED_STOCK_SOURCE2 = ifelse(!is.na(RESOLVED_STOCK_ORIGIN2) & is.na(RESOLVED_STOCK_SOURCE2), "OTO", RESOLVED_STOCK_SOURCE2),
+
+         
+         # PBT ------------------------
+         # If there's still no stock ID and there is high genetic certainty in stock 1 alone and it falls in the right BYs, take the GSI (PBT)
+         RESOLVED_STOCK_ORIGIN2 = ifelse(is.na(RESOLVED_STOCK_ORIGIN2) & PROB_1>=0.9999999 & 
+                                           is.na(DNA_STOCK_2) & BY%in%c(2017,2018), REGION_1_NAME, RESOLVED_STOCK_ORIGIN2),
+         # If stock ID isn't blank (ie, there is a stock ID) but the source is unknown, it's PBT
+         RESOLVED_STOCK_SOURCE2 = ifelse(!is.na(RESOLVED_STOCK_ORIGIN2) & is.na(RESOLVED_STOCK_SOURCE2), "PBT (uncertain)", RESOLVED_STOCK_SOURCE2),
+
+         
+         # GSI (100%) ------------------------
+         # If there's still no stock ID and there is a high genetic certainty in stock 1, take GSI (GSI certain)
+         RESOLVED_STOCK_ORIGIN2 = ifelse(is.na(RESOLVED_STOCK_ORIGIN2) & PROB_1>=0.9999999, REGION_1_NAME, RESOLVED_STOCK_ORIGIN2),
+         # If stock ID isn't blank (ie, there is a stock ID) but the source is unknown, it's GSI (GSI certain)
+         RESOLVED_STOCK_SOURCE2 = ifelse(!is.na(RESOLVED_STOCK_ORIGIN2) & is.na(RESOLVED_STOCK_SOURCE2), "GSI (100%)", RESOLVED_STOCK_SOURCE2),
+
+         
+         # GSI (70%) ------------------------
+         # If there's still no stock ID and there is a moderately high genetic certainty in stock 1, take GSI (GSI meh) 
+         RESOLVED_STOCK_ORIGIN2 = ifelse(is.na(RESOLVED_STOCK_ORIGIN2) & PROB_1>=0.7, REGION_1_NAME, RESOLVED_STOCK_ORIGIN2),
+         # If stock ID isn't blank (ie, there is a stock ID) but the source is unknown, it's GSI (GSI certain)
+         RESOLVED_STOCK_SOURCE2 = ifelse(!is.na(RESOLVED_STOCK_ORIGIN2) & is.na(RESOLVED_STOCK_SOURCE2), "GSI (70%)", RESOLVED_STOCK_SOURCE2),
+         
+  
+         RESOLVED_STOCK_ROLLUP2 = ifelse(RESOLVED_STOCK_ORIGIN2%in%c("San Juan River", "Port Renfrew Seapen"), "SWVI", 
+                                        RESOLVED_STOCK_ROLLUP),
+         
+         HATCHERY_ORIGIN = case_when(ADIPOSE_FIN_CLIPPED=="Y" | RESOLVED_STOCK_SOURCE2%in%c("CWT", "OTO", "PBT (uncertain)") ~ "Y",
+                                     ADIPOSE_FIN_CLIPPED!="Y" | is.na(ADIPOSE_FIN_CLIPPED) & 
+                                       !RESOLVED_STOCK_SOURCE2%in%c("CWT", "OTO", "PBT (uncertain)") ~ "unk"))
+
+sj.rec.biodat <- rec.biodat %>%
+  filter(RESOLVED_STOCK_ORIGIN2%in%c("San Juan River", "Port Renfrew Seapen")) 
+
+
+# Export if needed ------------------------- 
+#recbiodata <- createWorkbook()                    
+#addWorksheet(recbiodata, "All biodata")
+#addWorksheet(recbiodata, "SJ biodata") 
+#writeData(recbiodata, "All biodata", rec.biodat) 
+#writeData(recbiodata, "SJ biodata", sj.rec.biodat)
+#saveWorkbook(recbiodata, "~/ANALYSIS/data/CREST_biodat_KD_Jul2022.xlsx", overwrite = TRUE) 
+
+
+# Total source data types -------------------------
+sj.rec.biodat %>% group_by(HATCHERY_ORIGIN) %>% summarize(n())
+
+# Annual source data types -------------------------
+sj.rec.biodat %>% group_by(YEAR, RESOLVED_STOCK_SOURCE2 ) %>% summarize(n=n())
+
+## **** HERE NEXT DAY: INVESTIGATE THE RESOLVED_STOCK_SOURCE2==NA ENTRIES (maybe ok and just filter them out?)
+```
+
+
+### Age composition
+
+#### Age comp within area 21/22 (and 20-adj):
+
+Age composition of Chinook caught in the recreational fishery changes significantly over years and areas (Fig @\ref(fig:age-area-fig), stats not shown). Offshore areas, specifically subareas 121A and 121B appear to have more age-3 Chinook caught than nearshore areas (Fig @\ref(fig:age-sa-fig)). Most of these age-3 Chinook in subareas 121A and 121B are Southern US in origin (Table @\ref(tab:age-ru-tab)). **--> This indicates offshore area age data shouldn't be included in any future terminal run calculations.**
+
+```{r age-area-fig, fig.cap='Age of Chinook caught in sport fishery areas adjactent to Nitinat River. Area 121 is limited to Areas 121A-C, Area 20 is limited to 20-1 and 20A. Data from CREST.'}
+ggplot(data=CRESTbio %>% 
+         filter(SAMPLE_TYPE=="Sport" & !is.na(RESOLVED_AGE) & !RESOLVED_AGE%in%c(0,1) & AREA!=19 & YEAR<2022 & !is.na(iteration)) %>%
+         group_by(YEAR, AREA, RESOLVED_AGE) %>%
+         summarize(n=n())%>%
+         group_by(YEAR, AREA)%>%
+         mutate(propn=n/sum(n))) +
+  geom_point(aes(x=as.factor(YEAR), y=propn, group=as.factor(RESOLVED_AGE),fill=as.factor(RESOLVED_AGE),colour=as.factor(RESOLVED_AGE)), 
+             shape=21,size=3.5,alpha=0.7) +
+  geom_line(aes(x=as.factor(YEAR), y=propn, group=as.factor(RESOLVED_AGE),fill=as.factor(RESOLVED_AGE),colour=as.factor(RESOLVED_AGE)), 
+            size=1) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(y="Proportion in samples",x="",fill="Age:",colour="Age:") +
+  theme_bw() +
+  theme(axis.text = element_text(colour="black"),
+        legend.position = "right",
+        legend.direction = "vertical") +
+  facet_wrap(~AREA,scales="free",nrow=3)
+```
+
+<br>
+
+```{r age-sa-fig, fig.cap='Number of age samples collected in each subarea summed across 2013-2021. Data from CREST.'}
+ggplot(data=nitCRESTrecAge%>%group_by(SUBAREA,AREA,RESOLVED_AGE)%>%summarize(n=sum(n))%>%group_by(SUBAREA,RESOLVED_AGE)%>%mutate(sum=sum(n))) +
+  geom_bar(aes(x=as.factor(RESOLVED_AGE), y=sum, fill=as.factor(AREA), colour=as.factor(AREA)), position="dodge", stat="identity", width=1, alpha=0.1) +
+  labs(x="Age",y="Number of samples",fill="Area:",colour="Area:") +
+  theme_bw() +
+  theme(axis.text = element_text(colour="black"),
+        axis.title = element_text(face="bold"),
+        legend.position=c(0.8,0.15)) +
+  facet_wrap(~SUBAREA,scales="free")
+```
+
+<br>
+
+```{r age-ru-tab}
+CRESTbio %>% 
+  filter(SAMPLE_TYPE=="Sport" & !is.na(RESOLVED_AGE) & RESOLVED_AGE==3 & SUBAREA%in%c("121A","121B") & YEAR<2022 & !is.na(iteration)) %>%
+  group_by(RESOLVED_STOCK_ROLLUP) %>%
+  summarize(n=n()) %>%
+  filter(!is.na(RESOLVED_STOCK_ROLLUP)) %>%
+  arrange(desc(n)) %>%
+  rename(`Number of samples`=n,
+         `Stock region`=RESOLVED_STOCK_ROLLUP) %>%
+  kbl(align="c", caption = "Stock region of 3 year old Chinook caught in sport fishery areas 121A and B from 2013-2021.") %>%
+  kable_paper("hover", full_width=T, position = "center") 
+```
+
+
+
+
+
+
+
+
+
+Of all Nitinat-origin fish caught in CREST, what is age comp (incl 20-22):
+
+
+------------------------
+
+# **Coastwide CWT recoveries** 
+
+CWTed Nitinat salmon are recovered primarily in fisheries northern of the watershed which is to be expected (Fig. \@ref(fig:mrp-rcvy-fig)). It is important to note the limited/lack of escapement sampling for CWTs which will make the fishery exploitation look larger than it may be relative to 'Canadian Escapement'. Note a modest number of Coho CWTs are recovered in Washington. 
+
+<br>
+
+```{r mrp-rcvy-fig, fig.cap='Fishery regions where Nitinat River chinook are caught. Gray bars indicate expanded CWT recoveries, red bars are observed CWT recoveries. Regions may be a mix of gear types and sectors. Data from MRP.'}
+ggplot() +
+  geom_bar(data=nitRR_locn%>%group_by(`(RL) Species Name`,region_rollup)%>%summarize(total_exp_rcvy=sum(total_exp_rcvy))%>%filter(region_rollup!=""), 
+           aes(x=fct_reorder(region_rollup, total_exp_rcvy, .desc=T), y=total_exp_rcvy), stat="identity", alpha=0.5) +
+  geom_bar(data=nitRR_locn%>%group_by(`(RL) Species Name`,region_rollup)%>%summarize(total_obs_rcvy=sum(total_obs_rcvy))%>%
+             filter(region_rollup!="" & total_obs_rcvy>0), 
+           aes(x=fct_reorder(region_rollup, total_obs_rcvy, .desc=T), y=total_obs_rcvy), stat="identity", fill="red") +
+  labs(x="Region", y="Number of CWTs") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=45, hjust=1),
+        axis.text = element_text(colour="black"),
+        axis.title = element_text(face="bold")) +
+  facet_wrap(~`(RL) Species Name`, scales="free")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
